@@ -3120,6 +3120,17 @@ class _StreamingCall(StreamingWaitMonitor):
     def _adopt_final_response(self, final_response):
         """Adapter returned a completed response for ``stream=True``: switch the
         session to non-streaming and replay its content as deltas."""
+        # A relay that ignored ``stream=True`` can answer with a body that carries no choices at
+        # all (AgentRouter intermittently returns one instead of an SSE stream — the session then
+        # died on ``'NoneType' object has no attribute 'choices'``, burning the retry budget and
+        # killing unattended runs). Same class as a zero-chunk stream: raise EmptyStreamError so
+        # the stream layer retries on a fresh connection instead of reporting a Python attribute
+        # error. Checked BEFORE disabling streaming — a junk body is not evidence the route can't
+        # stream.
+        if not getattr(final_response, "choices", None):
+            raise EmptyStreamError(
+                "Provider returned a non-streaming response with no choices (possible upstream "
+                "error or malformed response body).")
         logger.info("Streaming request returned a final response object instead of an iterator; "
             "switching %s/%s to non-streaming for this session.", self.agent.provider or "unknown",
             self.agent.model or "unknown")
