@@ -3,10 +3,6 @@
 // Renderers publish what they're running; the main process asks before it lets
 // that go. The decision + copy live here (pure, testable) so main.ts only owns
 // the IPC and the dialog call.
-//
-// That's only true for a backend the app owns. A remote URL or Hermes Cloud
-// backend is supervised elsewhere and finishes the turn after the app quits,
-// so its prompt says so instead of warning about lost work (#79579).
 
 const MAX_LISTED = 4
 
@@ -58,30 +54,8 @@ export function mergeActiveWork(reports: Iterable<ActiveWork>): ActiveWork {
 }
 
 export interface QuitPrompt {
-  /** [cancel, confirm]: index 0 keeps the app open, index 1 quits. */
-  buttons: readonly [string, string]
   detail: string
   message: string
-}
-
-export interface BackendOwnershipInput {
-  /**
-   * Backends this app stops when it quits: spawned local children plus
-   * SSH-managed servers, across the primary and every pooled profile.
-   */
-  ownedBackendCount: number
-  /** What the primary profile resolves to; null means a locally spawned backend. */
-  primaryRouteKind: 'cloud' | 'remote' | 'ssh' | null
-}
-
-/**
- * Whether quitting takes the agent down with the app. Local and SSH backends
- * are started and stopped by the app. A remote URL or cloud backend is not,
- * but any other backend the app spawned (another window's connection, a
- * pooled profile) might be where the turn is running, so it still counts.
- */
-export function backendOwnedByApp({ ownedBackendCount, primaryRouteKind }: BackendOwnershipInput): boolean {
-  return primaryRouteKind === null || primaryRouteKind === 'ssh' || ownedBackendCount > 0
 }
 
 /**
@@ -90,15 +64,8 @@ export function backendOwnedByApp({ ownedBackendCount, primaryRouteKind }: Backe
  * `quittingForHandoff` covers the update / swap / uninstall relaunches: those
  * are the app replacing itself, not the user walking away, and a modal there
  * would strand the detached script waiting on a PID that never exits.
- *
- * `backendOwned` (see backendOwnedByApp) picks the copy: an owned backend dies
- * with the app, a remote/cloud one keeps working after it closes.
  */
-export function quitPromptFor(
-  work: ActiveWork,
-  quittingForHandoff: boolean,
-  backendOwned: boolean = true
-): null | QuitPrompt {
+export function quitPromptFor(work: ActiveWork, quittingForHandoff: boolean): null | QuitPrompt {
   if (quittingForHandoff || work.count < 1) {
     return null
   }
@@ -112,13 +79,10 @@ export function quitPromptFor(
   }
 
   return {
-    buttons: backendOwned ? ['Keep Running', 'Quit Anyway'] : ['Cancel', 'Quit'],
     detail: [
       lines.join('\n'),
       lines.length > 0 ? '' : null,
-      backendOwned
-        ? 'Quitting stops the agent mid-turn. Any work it has not finished writing is lost.'
-        : 'The agent keeps running on the remote backend. Quitting only closes Hermes on this computer; reconnect later to see the results.'
+      'Quitting stops the agent mid-turn. Any work it has not finished writing is lost.'
     ]
       .filter(line => line !== null)
       .join('\n')

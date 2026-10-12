@@ -1,9 +1,5 @@
 # QQ Bot
 
-Python dependency commands on this page use a
-[PM-prepared source checkout](../../reference/package-management.md#developer-workflow).
-After a dependency change, reactivate the checkout and restart Hermes.
-
 Connect Hermes to QQ via the **Official QQ Bot API (v2)** — supporting private (C2C), group @-mentions, guild, and direct messages with voice transcription.
 
 ## Overview
@@ -24,7 +20,7 @@ The QQ Bot adapter uses the [Official QQ Bot API](https://bot.q.qq.com/wiki/deve
 
 2. **Dependencies** — The adapter requires `aiohttp` and `httpx`:
    ```bash
-   python -c "import pm; pm.sync_venv(['messaging'], explicit=True)"
+   pip install aiohttp httpx
    ```
 
 ## Configuration
@@ -85,7 +81,6 @@ platforms:
         baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4"
         apiKey: "your-stt-key"
         model: "glm-asr"
-        timeout: 60              # seconds per transcription request (default 60)
 ```
 
 ## Voice Messages (STT)
@@ -123,6 +118,6 @@ This usually means:
 
 ### Connection errors
 
-- Ensure `aiohttp` and `httpx` are installed: `python -c "import pm; pm.sync_venv(['messaging'], explicit=True)"`
+- Ensure `aiohttp` and `httpx` are installed: `pip install aiohttp httpx`
 - Check network connectivity to `api.sgroup.qq.com` and the WebSocket gateway
 - Review gateway logs for detailed error messages and reconnect behavior

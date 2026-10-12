@@ -7,6 +7,7 @@ import {
   TERMINAL_FONT_SUGGESTIONS
 } from '@/app/right-sidebar/terminal/terminal-font'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { notifyError } from '@/store/notifications'
@@ -14,9 +15,7 @@ import type { HermesConfigRecord } from '@/types/hermes'
 
 import { setHermesConfigCache, useHermesConfigRecord } from '../hooks/use-config-record'
 import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
-import { useProfileSwitchLatch } from '../hooks/use-profile-switch-latch'
 
-import { ComboboxInput } from './combobox-input'
 import { getNested, setNested } from './helpers'
 import { ListRow } from './primitives'
 
@@ -29,15 +28,15 @@ function fontFamilyFromConfig(config: HermesConfigRecord): string {
 export function TerminalFontSetting() {
   const { t } = useI18n()
   const copy = t.settings.appearance
-  const { data: loadedConfig, dataUpdatedAt, writeScope } = useHermesConfigRecord()
+  const { data: loadedConfig } = useHermesConfigRecord()
   // draft === null ⇔ unseeded: nothing painted yet for this profile. The
-  // profile-switch handler keeps it unseeded until a config refetch completes;
-  // the timestamp is the freshness proof because React Query can reuse the
-  // same config object when the next profile has identical settings.
+  // profile-switch handler resets it to null and records the config object
+  // it was looking at (`staleConfig`) — the seed effect refuses to re-seed
+  // from that same object, so the previous profile's cached record can't
+  // repopulate the field; the next profile's fetch (a new object) seeds it.
+  // `draft` itself is the seed marker (no ref mirroring, per the lint rule).
   const [draft, setDraft] = useState<string | null>(null)
-  // The seed effect refuses to reseed while the query still carries the
-  // previous profile's stamp.
-  const { arm: armProfileLatch, pending: profilePending } = useProfileSwitchLatch({ dataUpdatedAt })
+  const [staleConfig, setStaleConfig] = useState<HermesConfigRecord | null>(null)
   const [saveVersion, setSaveVersion] = useState(0)
   const saveVersionRef = useRef(0)
 
@@ -48,19 +47,19 @@ export function TerminalFontSetting() {
   }
 
   useEffect(() => {
-    if (!loadedConfig || draft !== null || profilePending) {
+    if (!loadedConfig || draft !== null || loadedConfig === staleConfig) {
       return
     }
 
     const value = fontFamilyFromConfig(loadedConfig)
     setDraft(value)
     setTerminalFontFamilyFromConfig(value)
-  }, [draft, loadedConfig, profilePending])
+  }, [draft, loadedConfig, staleConfig])
 
   useOnProfileSwitch(() => {
     saveVersionRef.current += 1
     setDraft(null)
-    armProfileLatch()
+    setStaleConfig(loadedConfig ?? null)
     setSaveVersion(0)
     // Do not show the previous profile's font while the new profile loads.
     setTerminalFontFamilyFromConfig('')
@@ -89,9 +88,7 @@ export function TerminalFontSetting() {
     const timeout = window.setTimeout(() => {
       const next = setNested(loadedConfig, 'terminal.font_family', value)
 
-      // Sparse patch: PUT /api/config deep-merges, and echoing the cached
-      // snapshot would overwrite keys other surfaces changed since it loaded.
-      void saveHermesConfig(setNested({}, 'terminal.font_family', value), writeScope)
+      void saveHermesConfig(next)
         .then(result => {
           if (!result.ok) {
             throw new Error(t.settings.config.autosaveFailed)
@@ -117,7 +114,7 @@ export function TerminalFontSetting() {
     }, AUTOSAVE_DELAY_MS)
 
     return () => window.clearTimeout(timeout)
-  }, [draft, loadedConfig, saveVersion, t.settings.config.autosaveFailed, writeScope])
+  }, [draft, loadedConfig, saveVersion, t.settings.config.autosaveFailed])
 
   const update = (value: string) => {
     saveVersionRef.current += 1
@@ -134,20 +131,24 @@ export function TerminalFontSetting() {
       below={
         <div className="mt-3 space-y-2">
           <div className="flex items-center gap-3">
-            <ComboboxInput
+            <Input
               aria-label={copy.terminalFontTitle}
               className="flex-1"
               disabled={draft === null}
-              onChange={update}
-              options={TERMINAL_FONT_SUGGESTIONS}
+              list="hermes-terminal-font-families"
+              onChange={event => update(event.target.value)}
               placeholder={copy.terminalFontPlaceholder}
-              renderOption={font => <span style={{ fontFamily: resolveTerminalFontFamily(font) }}>{font}</span>}
               value={value}
             />
             <Button disabled={!value || draft === null} onClick={() => update('')} size="inline" variant="text">
               {copy.terminalFontReset}
             </Button>
           </div>
+          <datalist id="hermes-terminal-font-families">
+            {TERMINAL_FONT_SUGGESTIONS.map(font => (
+              <option key={font} value={font} />
+            ))}
+          </datalist>
           <div
             aria-label={copy.terminalFontPreview}
             className="overflow-hidden px-1 py-2 text-sm text-(--ui-text-secondary)"

@@ -1,0 +1,23 @@
+[package]
+name = "utopia-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+utopia-core.workspace = true
+utopia-ingest.workspace = true
+utopia-reason.workspace = true
+serde.workspace = true
+pgvector.workspace = true
+futures-util.workspace = true
+cron.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+url = "2.5.8"

@@ -5,7 +5,6 @@ import type {
   SubscriptionStateResponse,
   SubscriptionUpgradeResponse
 } from '../../../gatewayTypes.js'
-import { t } from '../../../i18n/runtime.js'
 import { openExternalUrl } from '../../../lib/openExternalUrl.js'
 import type { SubscriptionOverlayCtx } from '../../interfaces.js'
 import { patchOverlayState } from '../../overlayStore.js'
@@ -73,7 +72,7 @@ const buildSubscriptionCtx = (
     const url = buildManageUrl(initialState, tierId)
 
     if (!url) {
-      sys(t('slashCmd.subscription.manageUrlFailed'))
+      sys('Could not build manage URL — is your portal configured?')
 
       return Promise.resolve(false)
     }
@@ -81,18 +80,18 @@ const buildSubscriptionCtx = (
     const opened = openExternalUrl(url)
 
     if (opened) {
-      sys(t('slashCmd.subscription.openingManage'))
+      sys('Opening your subscription page in the browser — finish there, then re-run /subscription.')
     } else {
-      sys(t('slashCmd.subscription.openBrowserFailedManage', url))
+      sys('Could not open browser — visit your subscription page manually at ' + url)
     }
 
     return Promise.resolve(opened)
   },
   openPortal: (url: string) => {
     if (openExternalUrl(url)) {
-      sys(t('slashCmd.subscription.openingPortal'))
+      sys('Opening the portal in your browser — finish there, then re-run /subscription.')
     } else {
-      sys(t('slashCmd.subscription.openBrowserFailedPortal', url))
+      sys('Could not open browser — visit ' + url + ' to finish.')
     }
   },
   preview: tierId =>
@@ -113,7 +112,7 @@ const buildSubscriptionCtx = (
       .then(r => ({ error: r?.error, granted: !!(r && r.ok && r.granted), message: r?.message }))
       .catch(() => ({
         granted: false,
-        message: t('slashCmd.subscription.billingUnreachable')
+        message: 'Could not reach the billing service — check your connection, then retry.'
       })),
   resume: () =>
     ctx.gateway
@@ -157,7 +156,7 @@ export const subscriptionCommands: SlashCommand[] = [
         .then(
           ctx.guarded<SubscriptionStateResponse>(s => {
             if (!s.logged_in) {
-              sys(t('slashCmd.subscription.notLoggedIn'))
+              sys('Not logged into Nous Portal — run /portal to log in, then /subscription.')
 
               return
             }

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import { startPromptLiveSession } from '../app/useMainApp.js'
-import { t } from '../i18n/runtime.js'
 
 describe('startPromptLiveSession', () => {
   it('starts a kept-live session with generated id/title, applies selected model, then dispatches the prompt', async () => {
@@ -28,7 +27,7 @@ describe('startPromptLiveSession', () => {
 
     expect(sid).toBe('abc123')
     expect(calls).toEqual([
-      ['new', { message: t('session.lifecycle.newLiveSessionStarted'), title: undefined }],
+      ['new', { message: 'new live session started', title: undefined }],
       [
         'rpc',
         {
@@ -36,7 +35,7 @@ describe('startPromptLiveSession', () => {
           params: { key: 'model', session_id: 'abc123', value: 'kimi-k2.6 --provider ollama-cloud --session' }
         }
       ],
-      ['sys', t('session.main.modelSwitched', 'kimi-k2.6')],
+      ['sys', 'model → kimi-k2.6'],
       ['warn', { value: 'kimi-k2.6', warning: '' }],
       ['model-switched', { result: { value: 'kimi-k2.6', warning: '' }, value: 'kimi-k2.6' }],
       ['dispatch', 'Build the thing']

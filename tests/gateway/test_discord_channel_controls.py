@@ -211,6 +211,9 @@ async def test_auto_thread_failure_skips_agent_and_notifies_user(adapter, monkey
     # User gets a visible explanation in the parent channel instead of a silent
     # inline reply.
     channel.send.assert_awaited_once()
+    sent_text = channel.send.await_args.args[0]
+    assert "could not create" in sent_text.lower()
+    assert "thread" in sent_text.lower()
 
 
 # ── config.py bridging ───────────────────────────────────────────────
@@ -218,9 +221,9 @@ async def test_auto_thread_failure_skips_agent_and_notifies_user(adapter, monkey
 
 def test_config_bridges_ignored_channels(monkeypatch, tmp_path):
     """gateway/config.py bridges discord.ignored_channels to env var."""
-    import hermes_yaml as yaml
+    import yaml
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(yaml.safe_dump({
+    config_file.write_text(yaml.dump({
         "discord": {
             "ignored_channels": ["111", "222"],
         },

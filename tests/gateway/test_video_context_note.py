@@ -5,12 +5,13 @@ from unittest.mock import patch
 import pytest
 
 from gateway.config import GatewayConfig, Platform
-from gateway.platforms.event import MessageEvent, MessageType
-from gateway.run import GatewayRunner
+from gateway.platforms.base import MessageEvent, MessageType
 from gateway.session import SessionSource
 
 
-def _make_runner() -> GatewayRunner:
+def _make_runner() -> "GatewayRunner":  # type: ignore[name-defined]
+    from gateway.run import GatewayRunner
+
     runner = GatewayRunner.__new__(GatewayRunner)
     runner.config = GatewayConfig()
     runner.adapters = {}
@@ -19,7 +20,7 @@ def _make_runner() -> GatewayRunner:
 
 
 @pytest.mark.asyncio
-async def test_video_attachment_adds_path_note_not_document_note():
+async def test_video_attachment_adds_path_note_without_document_wording():
     from gateway.run import _build_media_placeholder
 
     runner = _make_runner()
@@ -42,6 +43,8 @@ async def test_video_attachment_adds_path_note_not_document_note():
             history=[],
         )
 
+    assert "video attachment" in result
     assert "/tmp/video_clip.mp4" in result
+    assert "video analysis or media tool" in result
     assert "The user sent a document" not in result
-    assert "/tmp/video_clip.mp4" in _build_media_placeholder(event)
+    assert _build_media_placeholder(event) == "[User sent a video: /tmp/video_clip.mp4]"

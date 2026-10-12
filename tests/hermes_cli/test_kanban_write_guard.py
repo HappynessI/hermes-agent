@@ -5,10 +5,6 @@ from __future__ import annotations
 import pytest
 
 from hermes_cli import kanban_db
-from hermes_cli import kanban_db_connect as kbc
-
-# These probe the kanban guard against the real root on purpose.
-pytestmark = pytest.mark.allow_real_home_io
 
 
 def test_connect_succeeds_under_test_home(tmp_path, monkeypatch):
@@ -16,7 +12,7 @@ def test_connect_succeeds_under_test_home(tmp_path, monkeypatch):
     home = tmp_path / "hermes_home"
     home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(home))
-    conn = kbc.connect()
+    conn = kanban_db.connect()
     try:
         assert str(kanban_db.kanban_db_path()).startswith(str(home))
     finally:
@@ -36,7 +32,7 @@ def test_connect_raises_when_kanban_home_is_real_root(monkeypatch):
         lambda board=None: _conftest._REAL_KANBAN_ROOT / "kanban.db",
     )
     with pytest.raises(RuntimeError, match="kanban_write_guard"):
-        kbc.connect()
+        kanban_db.connect()
 
 
 def test_connect_raises_for_explicit_db_path_under_real_root():
@@ -44,4 +40,4 @@ def test_connect_raises_for_explicit_db_path_under_real_root():
     import tests.conftest as _conftest
 
     with pytest.raises(RuntimeError, match="kanban_write_guard"):
-        kbc.connect(_conftest._REAL_KANBAN_ROOT / "kanban.db")
+        kanban_db.connect(_conftest._REAL_KANBAN_ROOT / "kanban.db")

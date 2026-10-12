@@ -48,4 +48,11 @@ describe('createKeepAwake', () => {
     expect(blocker.start).toHaveBeenCalledTimes(2)
     expect(keepAwake.isActive()).toBe(true)
   })
+
+  it('honors a custom blocker type', () => {
+    const { blocker } = fakeBlocker()
+    createKeepAwake(blocker, 'prevent-display-sleep').set(true)
+
+    expect(blocker.start).toHaveBeenCalledWith('prevent-display-sleep')
+  })
 })

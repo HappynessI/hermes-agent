@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import subprocess
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+import pytest
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -200,6 +202,10 @@ class TestDetectAudioEnvironmentTermuxFallback:
             "The misleading 'app is not installed' warning must not fire "
             "when probes are inconclusive but the binary works (issue "
             f"#31015). warnings={result['warnings']!r}"
+        )
+        assert any(
+            "Termux:API microphone recording available" in n
+            for n in result.get("notices", [])
         )
 
     def test_clean_probes_no_match_still_blocks(self, monkeypatch):

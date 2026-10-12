@@ -11,16 +11,9 @@
 // phrase (optionally addressed to Hermes), so a real turn that merely contains
 // the word "stop" — e.g. "stop the docker container" or "how do I stop a
 // running process" — is never swallowed.
-//
-// Config: a customised `voice.stop_phrases` replaces the built-in English list
-// (any language). Absent or left at the backend default, the English list below
-// is used. An explicit empty list disables spoken stop entirely — mirroring
-// `tools.voice_mode.is_voice_stop_phrase` (#117801).
 
-import { $voiceStopPhraseConfig, type VoiceStopPhraseConfig } from '@/store/voice-prefs'
-
-// Canonical English stop commands used while `voice.stop_phrases` is unset or
-// still the backend default (see `applyVoiceStopPhraseFromConfig`).
+// Canonical stop commands. Kept short and unambiguous; each must be the entire
+// spoken utterance to match.
 const STOP_PHRASES: readonly string[] = [
   'stop',
   'stop listening',
@@ -44,16 +37,13 @@ const STOP_PHRASES: readonly string[] = [
 // still count. Stripped before matching the core phrase.
 const ADDRESS_PREFIXES: readonly string[] = ['hey hermes', 'hey hermes,', 'hermes', 'hermes,', 'ok', 'okay', 'hey']
 
-// Normalise: Unicode-compose (so an NFD "отбой" from STT equals the NFC phrase
-// in config.yaml), lowercase, turn punctuation from ANY script into spaces
-// ("стоп!", "«отбой»", "停止。"), collapse whitespace. Transcripts and
-// configured phrases go through the same function, so the match stays exact —
-// like the backend's `is_voice_stop_phrase` — just punctuation-insensitive.
+// Normalise: lowercase, strip surrounding punctuation/whitespace, collapse
+// internal runs of spaces. Trailing punctuation (".", "!", "…") is common in
+// STT output and must not defeat the match.
 function normalize(text: string): string {
   return text
-    .normalize('NFKC')
     .toLowerCase()
-    .replace(/\p{P}+/gu, ' ')
+    .replace(/[.,!?;:…]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -73,38 +63,13 @@ function stripAddress(text: string): string {
   return text
 }
 
-const DEFAULT_PHRASES = STOP_PHRASES.map(normalize)
-
-function phrasesForConfig(config: VoiceStopPhraseConfig): readonly string[] | null {
-  if (config.mode === 'disabled') {
-    return null
-  }
-
-  if (config.mode === 'custom') {
-    return config.phrases.map(normalize).filter(phrase => phrase.length > 0)
-  }
-
-  return DEFAULT_PHRASES
-}
-
 /**
  * True when the entire spoken utterance is a stop command (optionally addressed
  * to Hermes). Returns false for anything that merely contains "stop" as part of
  * a longer, substantive request.
- *
- * Pass `config` in tests; production reads `$voiceStopPhraseConfig`.
  */
-export function isVoiceStopCommand(
-  transcript: string,
-  config: VoiceStopPhraseConfig = $voiceStopPhraseConfig.get()
-): boolean {
+export function isVoiceStopCommand(transcript: string): boolean {
   if (!transcript) {
-    return false
-  }
-
-  const phrases = phrasesForConfig(config)
-
-  if (phrases == null || phrases.length === 0) {
     return false
   }
 
@@ -120,7 +85,7 @@ export function isVoiceStopCommand(
   const candidates = new Set([normalized, stripAddress(normalized)])
 
   for (const candidate of candidates) {
-    if (phrases.includes(candidate)) {
+    if (STOP_PHRASES.includes(candidate)) {
       return true
     }
   }

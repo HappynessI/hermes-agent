@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { wakeCommands } from '../app/slash/commands/wake.js'
 import { isWakeUserDisabled, setWakeUserDisabled } from '../app/wakeState.js'
-import { applyLocale, resetLocale, t } from '../i18n/runtime.js'
 
 const wakeCommand = wakeCommands.find(cmd => cmd.name === 'wake')!
 
@@ -47,8 +46,9 @@ describe('/wake slash command', () => {
     setWakeUserDisabled(false)
   })
 
-  afterEach(() => {
-    resetLocale()
+  it('registers with usage metadata', () => {
+    expect(wakeCommand).toBeDefined()
+    expect(wakeCommand.usage).toBe('/wake [on|off|status]')
   })
 
   it('/wake on calls wake.start with surface tui and reports listening', async () => {
@@ -82,9 +82,9 @@ describe('/wake slash command', () => {
     await run('on')
 
     const out = printed(sys)
-    expect(out).toContain(t('slashCmd.wake.notStarted', ''))
-    expect(out).toContain(t('slashCmd.wake.reason.owned'))
-    expect(out).toContain(t('slashCmd.wake.ownedBy', 'gui'))
+    expect(out).toContain('not started')
+    expect(out).toContain('another surface owns the listener')
+    expect(out).toContain('gui')
   })
 
   it('/wake on surfaces the hint when unavailable', async () => {
@@ -95,22 +95,8 @@ describe('/wake slash command', () => {
     await run('on')
 
     const out = printed(sys)
-    expect(out).toContain(t('slashCmd.wake.reason.unavailable'))
+    expect(out).toContain('unavailable')
     expect(out).toContain('pip install openwakeword')
-  })
-
-  it('refusal reasons resolve through the active catalog, not at import time', async () => {
-    applyLocale('xx', {
-      lang: 'xx',
-      surface: 'tui',
-      messages: { 'slashCmd.wake.reason.owned': 'ZZ-owned' }
-    })
-
-    const { run, sys } = buildCtx({ 'wake.start': { reason: 'owned', started: false } })
-
-    await run('on')
-
-    expect(printed(sys)).toContain('ZZ-owned')
   })
 
   it('/wake off calls wake.stop, remembers the opt-out, and reports', async () => {
@@ -120,7 +106,25 @@ describe('/wake slash command', () => {
 
     expect(rpc).toHaveBeenCalledWith('wake.stop', { persist: true })
     expect(isWakeUserDisabled()).toBe(true)
-    expect(printed(sys)).toContain(t('slashCmd.wake.listenerOff', ''))
+    expect(printed(sys)).toContain('listener off')
+  })
+
+  it('/wake on reports when the gesture also enabled the config flag', async () => {
+    const { run, sys } = buildCtx({
+      'wake.start': { enabled_persisted: true, phrase: 'hey hermes', provider: 'openwakeword', started: true }
+    })
+
+    await run('on')
+
+    expect(printed(sys)).toContain('enabled in config')
+  })
+
+  it('/wake off reports when the gesture also disabled the config flag', async () => {
+    const { run, sys } = buildCtx({ 'wake.stop': { disabled_persisted: true, stopped: true } })
+
+    await run('off')
+
+    expect(printed(sys)).toContain('disabled in config')
   })
 
   it('/wake off explains a not_owner refusal but still records the opt-out', async () => {
@@ -129,7 +133,8 @@ describe('/wake slash command', () => {
     await run('off')
 
     expect(isWakeUserDisabled()).toBe(true)
-    expect(printed(sys)).toContain(t('slashCmd.wake.nothingToStop', t('slashCmd.wake.notOwnerStop'), ''))
+    expect(printed(sys)).toContain('nothing to stop')
+    expect(printed(sys)).toContain('doesn’t own the listener')
   })
 
   it('/wake status prints a listening one-liner', async () => {
@@ -176,7 +181,8 @@ describe('/wake slash command', () => {
     await run('status')
 
     const out = printed(sys)
-    expect(out).toContain(t('slashCmd.wake.offOwnedBy', 'gui', ''))
+    expect(out).toContain('off here')
+    expect(out).toContain('gui')
   })
 
   it('status surfaces the hint when the wake word is unavailable', async () => {
@@ -187,15 +193,16 @@ describe('/wake slash command', () => {
     await run('status')
 
     const out = printed(sys)
-    expect(out).toContain(t('slashCmd.wake.withHint', t('slashCmd.wake.unavailable'), 'no microphone detected'))
+    expect(out).toContain('unavailable')
+    expect(out).toContain('no microphone detected')
   })
 
-  it('rejects unknown subcommands without calling the gateway', async () => {
+  it('rejects unknown subcommands with usage text', async () => {
     const { rpc, run, sys } = buildCtx({})
 
     await run('banana')
 
     expect(rpc).not.toHaveBeenCalled()
-    expect(sys).toHaveBeenCalled()
+    expect(printed(sys)).toContain('usage: /wake [on|off|status]')
   })
 })

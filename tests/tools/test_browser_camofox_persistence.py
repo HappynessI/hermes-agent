@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tools.browser_camofox import (
+    _drop_session,
     _get_session,
     _managed_persistence_enabled,
     camofox_close,
@@ -47,6 +48,10 @@ def _clear_session_state():
 
 
 class TestManagedPersistenceToggle:
+    def test_disabled_by_default(self):
+        config = {"browser": {"camofox": {"managed_persistence": False}}}
+        with patch("tools.browser_camofox.load_config", return_value=config):
+            assert _managed_persistence_enabled() is False
 
 
     def test_disabled_on_config_load_error(self):

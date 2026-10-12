@@ -25,7 +25,9 @@ import pytest
 import cron.jobs as jobs
 
 
-pytestmark = pytest.mark.platforms("posix")  # POSIX-only: uid/gid ownership semantics
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX-only: uid/gid ownership semantics"
+)
 
 
 @pytest.fixture()
@@ -231,5 +233,8 @@ class TestCronStatusSurfacesError:
 
         cron_cli.cron_status()
         out = capsys.readouterr().out
+        assert "Last tick error:" in out
         assert "Permission denied" in out
+        # The permission-specific hint must point at the ownership fix.
+        assert "docker exec -u" in out
 

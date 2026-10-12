@@ -1,12 +1,12 @@
 ---
-title: "Qdrant — Vector search engine for production RAG systems"
-sidebar_label: "Qdrant"
+title: "Qdrant Vector Search — Vector search engine for production RAG systems"
+sidebar_label: "Qdrant Vector Search"
 description: "Vector search engine for production RAG systems"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# Qdrant
+# Qdrant Vector Search
 
 Vector search engine for production RAG systems.
 

@@ -6,7 +6,9 @@ arrive as STRINGS (the producer calls String(...) on every field).
 
 from __future__ import annotations
 
+import logging
 import time
+from typing import Optional
 import pytest
 
 from agent.credits_tracker import CreditsState, parse_credits_headers
@@ -132,6 +134,18 @@ DEPLETED_HEADERS = _base_headers(
     }
 )
 
+DEBT_HEADERS = _base_headers(
+    **{
+        "x-nous-credits-remaining-micros": micros(0),
+        "x-nous-credits-remaining-usd": "0.00",
+        "x-nous-credits-subscription-micros": str(-5_000_000),
+        "x-nous-credits-subscription-usd": "-5.00",
+        "x-nous-credits-purchased-micros": micros(0),
+        "x-nous-credits-purchased-usd": "0.00",
+        "x-nous-credits-paid-access": "false",
+    }
+)
+
 
 # ── State 1: healthy ─────────────────────────────────────────────────────────
 
@@ -175,12 +189,19 @@ class TestHealthyState:
 
 
 class TestSub90Pct:
+    def test_parses_successfully(self):
+        state = parse_credits_headers(SUB_90PCT_HEADERS)
+        assert state is not None
 
     def test_used_fraction_90pct(self):
         state = parse_credits_headers(SUB_90PCT_HEADERS)
         # (20.00 - 2.00) / 20.00 = 0.90
         assert state.used_fraction == pytest.approx(0.90)
 
+    def test_paid_access(self):
+        state = parse_credits_headers(SUB_90PCT_HEADERS)
+        assert state.paid_access is True
+        assert state.depleted is False
 
 
 # ── State 3: grant_exhausted ─────────────────────────────────────────────────
@@ -193,12 +214,19 @@ class TestGrantExhausted:
         # subscription_micros=0, limit=20.00 → (20-0)/20 = 1.0
         assert state.used_fraction == pytest.approx(1.0)
 
+    def test_paid_access_still_true(self):
+        state = parse_credits_headers(GRANT_EXHAUSTED_HEADERS)
+        assert state.paid_access is True
+        assert state.depleted is False
 
 
 # ── State 4: purchased_only ──────────────────────────────────────────────────
 
 
 class TestPurchasedOnly:
+    def test_parses_successfully(self):
+        state = parse_credits_headers(PURCHASED_ONLY_HEADERS)
+        assert state is not None
 
 
 
@@ -218,16 +246,42 @@ class TestToolPoolFree:
         state = parse_credits_headers(TOOL_POOL_FREE_HEADERS)
         assert state.tool_pool_micros == round(0.05 * 1_000_000)
 
+    def test_paid_access(self):
+        state = parse_credits_headers(TOOL_POOL_FREE_HEADERS)
+        assert state.paid_access is True
 
 
 # ── State 6: depleted ────────────────────────────────────────────────────────
 
 
+class TestDepleted:
+
+
+    def test_depleted_true(self):
+        state = parse_credits_headers(DEPLETED_HEADERS)
+        assert state.depleted is True
+
+
+    def test_remaining_zero(self):
+        state = parse_credits_headers(DEPLETED_HEADERS)
+        assert state.remaining_micros == 0
 
 
 # ── State 7: debt ────────────────────────────────────────────────────────────
 
 
+class TestDebt:
+    def test_parses_successfully(self):
+        # Negative subscription_micros should NOT cause the parse to fail
+        state = parse_credits_headers(DEBT_HEADERS)
+        assert state is not None
+
+
+
+    def test_paid_access_false(self):
+        state = parse_credits_headers(DEBT_HEADERS)
+        assert state.paid_access is False
+        assert state.depleted is True
 
 
 # ── State 8: missing ─────────────────────────────────────────────────────────
@@ -238,6 +292,8 @@ class TestMissing:
         state = parse_credits_headers({})
         assert state is None
 
+    def test_completely_empty_dict(self):
+        assert parse_credits_headers({}) is None
 
 
 # ── State 9: no_org ──────────────────────────────────────────────────────────
@@ -253,6 +309,13 @@ class TestNoOrg:
         state = parse_credits_headers(headers)
         assert state is None
 
+    def test_api_key_path_no_org_returns_none(self):
+        # Headers that might appear on an api-key path with no org
+        headers = {
+            "content-type": "application/json",
+            "authorization": "Bearer sk-test",
+        }
+        assert parse_credits_headers(headers) is None
 
 
 # ── Version validation ───────────────────────────────────────────────────────
@@ -267,6 +330,27 @@ class TestVersionValidation:
 
 
 
+    def test_version_greater_than_1_warns_once(self, caplog):
+        """Version > 1 must log a warning, and ONLY ONCE across multiple calls."""
+        import agent.credits_tracker as ct
+
+        original = ct._version_warning_emitted
+        try:
+            # Reset the warn-once latch so this test starts clean regardless of order
+            ct._version_warning_emitted = False
+
+            headers = _base_headers(**{"x-nous-credits-version": "3"})
+            with caplog.at_level(logging.WARNING, logger="agent.credits_tracker"):
+                parse_credits_headers(headers)
+                parse_credits_headers(headers)
+                parse_credits_headers(headers)
+
+            warning_records = [r for r in caplog.records if "unsupported" in r.message.lower() or "version" in r.message.lower()]
+            assert len(warning_records) == 1, (
+                f"Expected exactly 1 version warning, got {len(warning_records)}: {[r.message for r in warning_records]}"
+            )
+        finally:
+            ct._version_warning_emitted = original
 
 
 
@@ -397,6 +481,11 @@ class TestNegativeValues:
 
 
 class TestUsdValidation:
+    def test_valid_usd_format(self):
+        headers = _base_headers(**{"x-nous-credits-remaining-usd": "18.00"})
+        state = parse_credits_headers(headers)
+        assert state is not None
+        assert state.remaining_usd == "18.00"
 
     def test_usd_one_decimal_returns_none(self):
         """'18.0' does not match ^-?\d+\.\d{2}$"""
@@ -449,7 +538,23 @@ class TestAsOfMs:
 
 
 class TestDenominatorKind:
+    def test_subscription_cap_valid(self):
+        headers = _base_headers(
+            **{
+                "x-nous-credits-denominator-kind": "subscription_cap",
+                "x-nous-credits-subscription-limit-micros": micros(20.00),
+                "x-nous-credits-subscription-limit-usd": "20.00",
+            }
+        )
+        state = parse_credits_headers(headers)
+        assert state is not None
+        assert state.denominator_kind == "subscription_cap"
 
+    def test_none_valid(self):
+        headers = _base_headers(**{"x-nous-credits-denominator-kind": "none"})
+        state = parse_credits_headers(headers)
+        assert state is not None
+        assert state.denominator_kind == "none"
 
     def test_invalid_denominator_kind_returns_none(self):
         headers = _base_headers(**{"x-nous-credits-denominator-kind": "invalid_kind"})
@@ -494,6 +599,10 @@ class TestUnknownHeaders:
 
 
 class TestHeaderNormalization:
+    def test_uppercase_headers_parsed(self):
+        headers = {k.upper(): v for k, v in _base_headers().items()}
+        state = parse_credits_headers(headers)
+        assert state is not None
 
     def test_mixed_case_headers_parsed(self):
         headers = {
@@ -520,6 +629,26 @@ class TestHeaderNormalization:
 
 
 class TestCreditsStateDefaults:
+    def test_default_state(self):
+        state = CreditsState()
+        assert state.version == 0
+        assert state.remaining_micros == 0
+        assert state.remaining_usd == ""
+        assert state.subscription_micros == 0
+        assert state.subscription_usd == ""
+        assert state.subscription_limit_micros is None
+        assert state.subscription_limit_usd is None
+        assert state.rollover_micros == 0
+        assert state.purchased_micros == 0
+        assert state.purchased_usd == ""
+        assert state.tool_pool_micros == 0
+        assert state.tool_pool_gated_off is False
+        assert state.denominator_kind == "none"
+        assert state.paid_access is True
+        assert state.disabled_reason is None
+        assert state.as_of_ms == 0
+        assert state.captured_at == 0.0
+        assert state.from_header is False
 
 
     def test_age_seconds_inf_when_no_data(self):
@@ -533,6 +662,10 @@ class TestCreditsStateDefaults:
 
 
 class TestDepletedProperty:
+    def test_depleted_equals_not_paid_access(self):
+        """depleted must be exactly `not paid_access`, never `remaining==0`."""
+        state = CreditsState(paid_access=False, remaining_micros=0, captured_at=time.time())
+        assert state.depleted is True
 
     def test_not_depleted_when_paid_access_true(self):
         state = CreditsState(paid_access=True, remaining_micros=0, captured_at=time.time())

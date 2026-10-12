@@ -30,13 +30,16 @@ from types import SimpleNamespace
 
 import pytest
 
+
 # ── helpers ──────────────────────────────────────────────────────────────
+
 
 class _TimeoutReason:
     """Minimal FailoverReason stand-in for unit tests."""
 
     def __init__(self, value: str = "timeout") -> None:
         self.value = value
+
 
 def _classified(reason: str = "timeout", **kwargs) -> SimpleNamespace:
     """Construct a ClassifiedError stand-in with the given reason."""
@@ -51,7 +54,9 @@ def _classified(reason: str = "timeout", **kwargs) -> SimpleNamespace:
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
 
+
 # ── Part 1: classifier override (agent/error_classifier.py:720-738) ──
+
 
 def _make_session(disconnect_message: str, model: str, *, num_messages: int = 250):
     """Construct inputs to classify_api_error for a disconnect+large-session case."""
@@ -67,6 +72,7 @@ def _make_session(disconnect_message: str, model: str, *, num_messages: int = 25
         "num_messages": num_messages,
     }
 
+
 class TestClassifierOverride:
     """The reasoning-model override at error_classifier.py:720-738.
 
@@ -77,9 +83,14 @@ class TestClassifierOverride:
     conversation history.
     """
 
+
     @pytest.mark.parametrize("model", [
         "nvidia/nemotron-3-ultra-550b-a55b",
+        "openai/o3-mini",
+        "anthropic/claude-opus-4-6",
         "deepseek/deepseek-r1",
+        "qwen/qwq-32b-preview",
+        "x-ai/grok-4-fast-reasoning",
     ])
     def test_all_known_reasoning_models_override(self, model):
         from agent.error_classifier import classify_api_error, FailoverReason
@@ -109,7 +120,12 @@ class TestClassifierOverride:
         assert result.reason == FailoverReason.context_overflow
         assert result.should_compress is True
 
+
+
+
+
 # ── Part 2: detection (agent/thinking_timeout_guidance.py:is_thinking_timeout) ──
+
 
 class TestIsThinkingTimeout:
 
@@ -125,6 +141,9 @@ class TestIsThinkingTimeout:
         classified = _classified(reason="timeout")
         assert is_thinking_timeout(classified, model, msg) is True
 
+
+
+
     def test_empty_error_msg_returns_false(self):
         from agent.thinking_timeout_guidance import is_thinking_timeout
         classified = _classified(reason="timeout")
@@ -139,7 +158,9 @@ class TestIsThinkingTimeout:
             classified, "nvidia/nemotron-3-ultra-550b-a55b", None,
         ) is False
 
+
 # ── Part 2: guidance text (agent/thinking_timeout_guidance.py:build_thinking_timeout_guidance) ──
+
 
 class TestBuildThinkingTimeoutGuidance:
     def test_guidance_mentions_config_path(self):
@@ -148,3 +169,17 @@ class TestBuildThinkingTimeoutGuidance:
             provider="nvidia", model="nvidia/nemotron-3-ultra-550b-a55b",
         )
         assert "providers.nvidia.models.nvidia/nemotron-3-ultra-550b-a55b.stale_timeout_seconds" in text
+
+
+    def test_guidance_mentions_known_providers(self):
+        from agent.thinking_timeout_guidance import build_thinking_timeout_guidance
+        text = build_thinking_timeout_guidance(provider="nvidia", model="x")
+        # At least one of the known cloud providers should be mentioned
+        # to give the user context.
+        assert any(p in text for p in (
+            "NVIDIA NIM", "OpenAI", "Anthropic", "DeepSeek",
+        ))
+
+
+
+

@@ -12,10 +12,12 @@ import asyncio
 import base64
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from agent.plugin_llm import (
+    PluginLlm,
     PluginLlmCompleteResult,
     PluginLlmImageInput,
     PluginLlmStructuredResult,
@@ -30,9 +32,11 @@ from agent.plugin_llm import (
     make_plugin_llm_for_test,
 )
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _fake_response(text: str, *, prompt: int = 4, completion: int = 6) -> SimpleNamespace:
     """Build an OpenAI-shaped response with the given text + token usage."""
@@ -50,6 +54,7 @@ def _fake_response(text: str, *, prompt: int = 4, completion: int = 6) -> Simple
         ),
     )
 
+
 def _trusted_policy(plugin_id: str = "trusted-plugin", **overrides: Any) -> _TrustPolicy:
     defaults = dict(
         allow_provider_override=True,
@@ -64,11 +69,16 @@ def _trusted_policy(plugin_id: str = "trusted-plugin", **overrides: Any) -> _Tru
     defaults.update(overrides)
     return _TrustPolicy(plugin_id=plugin_id, **defaults)
 
+
 # ---------------------------------------------------------------------------
 # Trust gate
 # ---------------------------------------------------------------------------
 
+
 class TestTrustGate:
+
+
+
 
     def test_overrides_independent(self):
         """Each override is gated independently — turning on
@@ -97,6 +107,7 @@ class TestTrustGate:
                 requested_profile=None,
             )
 
+
     def test_provider_allowlist_accepts_listed_case_insensitively(self):
         policy = _TrustPolicy(
             plugin_id="restricted",
@@ -112,6 +123,8 @@ class TestTrustGate:
             requested_profile=None,
         )
         assert p == "OpenRouter"
+
+
 
     def test_no_overrides_passes_through(self):
         policy = _TrustPolicy(plugin_id="locked")
@@ -135,6 +148,7 @@ class TestTrustGate:
         )
         assert result == ("openrouter", "anthropic/claude-3-5-sonnet", "ada", "work")
 
+
 class TestAllowlistCoercion:
 
     def test_list_of_strings(self):
@@ -147,9 +161,13 @@ class TestAllowlistCoercion:
         assert ranges == frozenset()
         assert allow_any is True
 
+
+
+
 # ---------------------------------------------------------------------------
 # Structured message building
 # ---------------------------------------------------------------------------
+
 
 class TestStructuredMessageBuilding:
     def test_text_only_input(self):
@@ -167,6 +185,8 @@ class TestStructuredMessageBuilding:
         assert parts[0]["type"] == "text"
         assert "Extract the action items" in parts[0]["text"]
         assert parts[1] == {"type": "text", "text": "meeting notes go here"}
+
+
 
     def test_image_bytes_encoded_as_data_url(self):
         png_bytes = b"\x89PNG\r\n\x1a\nfake"
@@ -202,13 +222,20 @@ class TestStructuredMessageBuilding:
         assert img_part["type"] == "image_url"
         assert img_part["image_url"]["url"] == "https://example.com/cat.jpg"
 
+
+
+
 # ---------------------------------------------------------------------------
 # JSON parsing
 # ---------------------------------------------------------------------------
 
+
 class TestJsonParsing:
     def test_strip_code_fences_with_json_label(self):
         assert _strip_code_fences('```json\n{"a":1}\n```') == '{"a":1}'
+
+
+
 
     def test_parse_valid_json_with_json_mode(self):
         parsed, ct = _parse_structured_text(
@@ -218,6 +245,9 @@ class TestJsonParsing:
         )
         assert parsed == {"language": "French", "is_question": True}
         assert ct == "json"
+
+
+
 
     def test_schema_validation_accepts_match(self):
         pytest.importorskip("jsonschema")
@@ -234,9 +264,11 @@ class TestJsonParsing:
         assert parsed == {"language": "French"}
         assert ct == "json"
 
+
 # ---------------------------------------------------------------------------
 # End-to-end facade
 # ---------------------------------------------------------------------------
+
 
 class TestPluginLlmFacade:
     def test_complete_uses_active_model_by_default(self):
@@ -259,6 +291,8 @@ class TestPluginLlmFacade:
         assert captured["profile_override"] is None
         assert result.usage.input_tokens == 4
         assert result.usage.total_tokens == 10
+
+
 
     def test_complete_passes_through_trusted_overrides(self):
         captured: dict = {}
@@ -318,6 +352,11 @@ class TestPluginLlmFacade:
         }
         assert result.content_type == "json"
 
+
+
+
+
+
     def test_complete_structured_with_image_passes_image_url_part(self):
         captured: dict = {}
 
@@ -342,11 +381,29 @@ class TestPluginLlmFacade:
         assert len(image_parts) == 1
         assert image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
 
+
 # ---------------------------------------------------------------------------
 # Async surface
 # ---------------------------------------------------------------------------
 
+
 class TestAsyncSurface:
+    def test_acomplete_uses_async_caller(self):
+        async def fake_async(**_kwargs):
+            return "openai", "gpt-4o", _fake_response("async hello")
+
+        llm = make_plugin_llm_for_test(
+            plugin_id="my-plugin",
+            policy=_TrustPolicy(plugin_id="my-plugin"),
+            async_caller=fake_async,
+        )
+
+        async def _run() -> PluginLlmCompleteResult:
+            return await llm.acomplete([{"role": "user", "content": "hi"}])
+
+        result = asyncio.run(_run())
+        assert result.text == "async hello"
+        assert result.provider == "openai"
 
     def test_acomplete_structured_parses_json(self):
         async def fake_async(**_kwargs):
@@ -369,9 +426,11 @@ class TestAsyncSurface:
         assert result.parsed == {"x": 42}
         assert result.content_type == "json"
 
+
 # ---------------------------------------------------------------------------
 # Config-driven trust gate (round-trip via plugins.entries.<id>.llm)
 # ---------------------------------------------------------------------------
+
 
 class TestConfigDrivenPolicy:
     def test_policy_loaded_from_yaml(self, tmp_path, monkeypatch):
@@ -424,11 +483,24 @@ plugins:
         assert policy.allow_profile_override is False
         assert policy.allow_agent_id_override is False
 
+
 # ---------------------------------------------------------------------------
 # Plugin context wiring
 # ---------------------------------------------------------------------------
 
+
 class TestPluginContextIntegration:
+    def test_ctx_llm_is_lazy_singleton(self):
+        from hermes_cli.plugins import PluginContext, PluginManifest, PluginManager
+
+        manifest = PluginManifest(name="test-plugin", source="test", key="test-plugin")
+        manager = PluginManager()
+        ctx = PluginContext(manifest, manager)
+        first = ctx.llm
+        second = ctx.llm
+        assert first is second
+        assert isinstance(first, PluginLlm)
+        assert first._plugin_id == "test-plugin"  # type: ignore[attr-defined]
 
     def test_ctx_llm_uses_manifest_key_for_policy(self):
         from hermes_cli.plugins import PluginContext, PluginManifest, PluginManager
@@ -440,14 +512,17 @@ class TestPluginContextIntegration:
         ctx = PluginContext(manifest, manager)
         assert ctx.llm._plugin_id == "image_gen/openai"  # type: ignore[attr-defined]
 
+
 # ---------------------------------------------------------------------------
 # Attribution (result.provider / result.model / audit log)
 # ---------------------------------------------------------------------------
+
 
 class TestAttribution:
     """Verifies that the result object and the audit log carry the real
     provider/model that ``call_llm`` ended up using, NOT the placeholder
     fallbacks ('auto', 'default') from earlier drafts."""
+
 
     def test_response_model_wins_over_model_override(self):
         """Providers often canonicalise the model name (e.g. ``gpt-4o``
@@ -464,6 +539,7 @@ class TestAttribution:
         assert model == "gpt-4o-2024-08-06"
         # Provider override is unaffected by response.model.
         assert provider == "openrouter"
+
 
     def test_response_model_used_even_when_no_overrides(self, monkeypatch):
         """The provider's canonical model name should still flow through
@@ -483,9 +559,12 @@ class TestAttribution:
         assert provider == "openrouter"
         assert model == "openai/gpt-4o-2024-08-06"
 
+
+
 # ---------------------------------------------------------------------------
 # Hook-mode integration (ctx.llm called from a post_tool_call callback)
 # ---------------------------------------------------------------------------
+
 
 class TestHookMode:
     """The docs page promises ``ctx.llm`` works from inside lifecycle
@@ -546,3 +625,31 @@ class TestHookMode:
                    for m in llm_call["messages"] if isinstance(m, dict))
         hook_record = captured[1]
         assert hook_record["hook_returned"] == "rewrote it"
+
+    def test_complete_works_from_post_tool_call_hook_when_async_caller_set(self):
+        """Hooks fired synchronously should still work with sync
+        ctx.llm.complete even if other callsites use async."""
+        from hermes_cli.plugins import PluginContext, PluginManifest, PluginManager
+
+        manifest = PluginManifest(name="hook-async", source="test", key="hook-async")
+        manager = PluginManager()
+        ctx = PluginContext(manifest, manager)
+
+        def fake_caller(**_):
+            return "openrouter", "model-x", _fake_response("ok")
+
+        ctx._llm = make_plugin_llm_for_test(  # type: ignore[attr-defined]
+            plugin_id="hook-async",
+            policy=_TrustPolicy(plugin_id="hook-async"),
+            sync_caller=fake_caller,
+        )
+
+        called: list = []
+
+        def hook(**kwargs):
+            r = ctx.llm.complete(messages=[{"role": "user", "content": "x"}])
+            called.append(r.text)
+
+        ctx.register_hook("post_tool_call", hook)
+        manager.invoke_hook("post_tool_call", tool_name="x", args={}, result="y")
+        assert called == ["ok"]

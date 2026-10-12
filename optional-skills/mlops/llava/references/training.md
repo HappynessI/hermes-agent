@@ -97,7 +97,7 @@ with open("custom_data.json", "w") as f:
 ### Fine-tune script
 
 ```bash
-#!/usr/bin/env bash
+#!/bin/bash
 
 # Set paths
 DATA_PATH="custom_data.json"

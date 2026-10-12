@@ -1,12 +1,12 @@
 ---
-title: "Simpo — Reference-free preference alignment, simpler than DPO"
-sidebar_label: "Simpo"
+title: "Simpo Training — Reference-free preference alignment, simpler than DPO"
+sidebar_label: "Simpo Training"
 description: "Reference-free preference alignment, simpler than DPO"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# Simpo
+# Simpo Training
 
 Reference-free preference alignment, simpler than DPO.
 

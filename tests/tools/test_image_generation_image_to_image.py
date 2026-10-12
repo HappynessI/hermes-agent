@@ -14,10 +14,10 @@ tool routes to a provider's edit endpoint when ``image_url`` /
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import pytest
-import hermes_yaml as yaml
+import yaml
 
 from agent import image_gen_registry
 from agent.image_gen_provider import ImageGenProvider
@@ -59,21 +59,13 @@ class TestFalEditPayload:
         assert payload.get("aspect_ratio") == "16:9"
 
 
-    def test_singular_edit_image_param_kling_image_v3(self):
-        """Kling Image v3's i2i endpoint takes a SINGULAR `image_url` string;
-        the catalog opts in via edit_image_param and only the first source
-        image is sent — no `image_urls` list may leak into the payload."""
-        from tools.image_generation_tool import _build_fal_edit_payload
+    def test_text_only_model_has_no_edit_endpoint(self):
+        from tools.image_generation_tool import FAL_MODELS
 
-        payload = _build_fal_edit_payload(
-            "fal-ai/kling-image/v3/text-to-image", "make it winter",
-            ["https://x/a.png", "https://x/b.png"], "landscape",
-        )
-        assert payload["prompt"] == "make it winter"
-        assert payload["image_url"] == "https://x/a.png"
-        assert "image_urls" not in payload
-        assert payload.get("aspect_ratio") == "16:9"
-        assert payload.get("resolution") == "2K"
+        # z-image/turbo is a pure text-to-image model — no edit endpoint.
+        assert "edit_endpoint" not in FAL_MODELS["fal-ai/z-image/turbo"]
+        # while nano-banana-pro is edit-capable
+        assert FAL_MODELS["fal-ai/nano-banana-pro"].get("edit_endpoint")
 
 
 class TestMandatoryKeysSurviveWhitelist:
@@ -132,11 +124,7 @@ class TestFalRouting:
         capture: dict = {}
         self._patch_submit(monkeypatch, image_tool, capture)
 
-        # Routing test — disable the (default-on) upscale pass so the captured
-        # endpoint is the generation submit, not the upscaler.
-        raw = image_tool.image_generate_tool(
-            prompt="a cat", aspect_ratio="square", upscale=False,
-        )
+        raw = image_tool.image_generate_tool(prompt="a cat", aspect_ratio="square")
         out = json.loads(raw)
         assert out["success"] is True
         assert out["modality"] == "text"
@@ -163,7 +151,6 @@ class TestFalRouting:
         out = json.loads(raw)
         assert out["success"] is True
         assert out["modality"] == "image"
-        assert capture["endpoint"] == image_tool.FAL_MODELS["fal-ai/flux-2-pro"]["edit_endpoint"]
         assert upscale_called["hit"] is False
 
 
@@ -257,10 +244,37 @@ class TestPluginDispatchImageToImage:
 # ---------------------------------------------------------------------------
 
 
+class _PluginBothProvider(ImageGenProvider):
+    @property
+    def name(self) -> str:
+        return "both"
+
+    def is_available(self) -> bool:
+        return True
+
+    def default_model(self) -> Optional[str]:
+        return "both-v1"
+
+    def capabilities(self) -> Dict[str, Any]:
+        return {"modalities": ["text", "image"], "max_reference_images": 5}
+
+    def generate(self, prompt, aspect_ratio="landscape", *, image_url=None,
+                 reference_image_urls=None, **kwargs):
+        return {"success": True}
+
+
 class TestDynamicSchema:
     def _no_discovery(self, monkeypatch):
         import hermes_cli.plugins as plugins_module
         monkeypatch.setattr(plugins_module, "_ensure_plugins_discovered", lambda *a, **k: None)
+
+    def test_fal_edit_model_advertises_both(self, cfg_home, monkeypatch):
+        from tools.image_generation_tool import _build_dynamic_image_schema
+
+        _write_cfg(cfg_home, {"image_gen": {"model": "fal-ai/nano-banana-pro"}})
+        desc = _build_dynamic_image_schema()["description"]
+        assert "text-to-image" in desc and "image-to-image" in desc
+        assert "routes automatically" in desc
 
 
     def test_builder_wired_into_registry(self):

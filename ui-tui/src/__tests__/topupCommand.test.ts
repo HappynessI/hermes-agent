@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getOverlayState, resetOverlayState } from '../app/overlayStore.js'
 import { topupCommands } from '../app/slash/commands/topup.js'
 import type { BillingStateResponse } from '../gatewayTypes.js'
-import { t } from '../i18n/runtime.js'
 
 vi.mock('../lib/openExternalUrl.js', () => ({
   openExternalUrl: vi.fn(() => true)
@@ -93,7 +92,7 @@ describe('/billing slash command (overlay-driven)', () => {
   it('not logged in → prompts to log in, no overlay', async () => {
     const { run, sys } = buildCtx({ 'billing.state': { ...ownerState(), logged_in: false, ok: true } })
     await run('')
-    expect(sys).toHaveBeenCalled()
+    expect(printed(sys)).toContain('Not logged into Nous Portal')
     expect(getOverlayState().billing).toBeNull()
   })
 
@@ -117,14 +116,32 @@ describe('/billing slash command (overlay-driven)', () => {
     expect(getOverlayState().confirm).toBeNull()
   })
 
+  it('member overview carries the non-admin state for component-side gating', async () => {
+    const { run } = buildCtx({
+      'billing.state': ownerState({
+        is_admin: false,
+        can_charge: false,
+        role: 'MEMBER',
+        card: null,
+        monthly_cap: null,
+        auto_reload: null
+      })
+    })
+
+    await run('')
+    const billing = getOverlayState().billing
+    expect(billing?.state.is_admin).toBe(false)
+    expect(billing?.screen).toBe('overview')
+  })
+
   // ── Overlay ctx behaviors (RPC + error mapping live in billing.ts) ──
 
   it('ctx.validate rejects out-of-bounds and sub-cent amounts, accepts valid', async () => {
     const { run } = buildCtx({ 'billing.state': ownerState() })
     await run('')
     const ctx = getOverlayState().billing!.ctx
-    expect(ctx.validate('5').error).toBe(t('slashCmd.topup.validate.minimum', '10'))
-    expect(ctx.validate('10.005').error).toBe(t('slashCmd.topup.validate.invalid'))
+    expect(ctx.validate('5').error).toContain('Minimum is $10')
+    expect(ctx.validate('10.005').error).toContain('2 decimal places')
     expect(ctx.validate('100').amount).toBe('100')
     expect(ctx.validate('$50').amount).toBe('50')
   })
@@ -144,8 +161,8 @@ describe('/billing slash command (overlay-driven)', () => {
       ctx.charge('100')
       await vi.runAllTimersAsync()
       const out = printed(sys)
-      expect(out).toContain(t('slashCmd.topup.charge.submitted'))
-      expect(out).toContain(t('slashCmd.topup.charge.settled', '$100'))
+      expect(out).toContain('Charge submitted')
+      expect(out).toContain('✅ $100 added.')
     } finally {
       vi.useRealTimers()
     }
@@ -165,9 +182,9 @@ describe('/billing slash command (overlay-driven)', () => {
       getOverlayState().billing!.ctx.charge('100')
       await vi.runAllTimersAsync()
       const out = printed(sys)
-      expect(out).toContain(t('slashCmd.topup.charge.cardDeclined'))
+      expect(out).toContain('Your card was declined')
       // Parity with the CLI: a failed poll funnels to the portal (from state.portal_url).
-      expect(out).toContain(t('slashCmd.topup.error.portal', 'https://portal/billing?topup=open'))
+      expect(out).toContain('Portal: https://portal/billing?topup=open')
     } finally {
       vi.useRealTimers()
     }
@@ -191,8 +208,28 @@ describe('/billing slash command (overlay-driven)', () => {
     await Promise.resolve()
     await Promise.resolve()
     const out = printed(sys)
-    expect(out).toContain(t('slashCmd.topup.error.monthlyCapExceededRemaining', '42.50'))
-    expect(out).toContain(t('slashCmd.topup.error.portal', '/billing?topup=open'))
+    expect(out).toContain('Monthly spend cap reached — $42.50 headroom left.')
+    expect(out).toContain('Portal: /billing?topup=open')
+  })
+
+  it('ctx.charge no_payment_method → portal funnel copy', async () => {
+    const { run, sys } = buildCtx({
+      'billing.state': ownerState(),
+      'billing.charge': {
+        ok: false,
+        error: 'no_payment_method',
+        portal_url: '/billing?topup=open',
+        idempotency_key: 'k'
+      }
+    })
+
+    await run('')
+    getOverlayState().billing!.ctx.charge('100')
+    await Promise.resolve()
+    await Promise.resolve()
+    const out = printed(sys)
+    expect(out).toContain('No saved card for terminal charges')
+    expect(out).toContain('Portal: /billing?topup=open')
   })
 
   it('ctx.charge consent_required → one-time portal confirmation copy + portal funnel', async () => {
@@ -209,13 +246,28 @@ describe('/billing slash command (overlay-driven)', () => {
     await run('')
     await getOverlayState().billing!.ctx.charge('100')
     const out = printed(sys)
-    expect(out).toContain(t('slashCmd.topup.error.consentRequired'))
-    expect(out).toContain(t('slashCmd.topup.error.portal', '/billing/consent'))
+    expect(out).toContain('one-time card confirmation')
+    expect(out).toContain('Portal: /billing/consent')
   })
 
   it.each([
-    [undefined, t('slashCmd.topup.error.stripeUnavailable', '')],
-    [120, t('slashCmd.topup.error.stripeUnavailable', t('slashCmd.topup.error.retryIn', '2'))]
+    ['org_access_denied', "This token isn't bound to an org you can manage"],
+    ['upgrade_cap_exceeded', 'Daily plan-change limit reached'],
+    ['auto_top_up_disabled_failures', 'Auto-reload was turned off after repeated charge failures']
+  ])('ctx.charge %s → typed recovery copy', async (error, copy) => {
+    const { run, sys } = buildCtx({
+      'billing.state': ownerState(),
+      'billing.charge': { ok: false, error, idempotency_key: 'k' }
+    })
+
+    await run('')
+    await getOverlayState().billing!.ctx.charge('100')
+    expect(printed(sys)).toContain(copy)
+  })
+
+  it.each([
+    [undefined, 'Stripe is having trouble right now — try again shortly.'],
+    [120, 'Stripe is having trouble right now — try again shortly (try again in ~2 min).']
   ])('ctx.charge stripe_unavailable (retry_after=%s) → transient Stripe copy', async (retryAfter, copy) => {
     const { run, sys } = buildCtx({
       'billing.state': ownerState(),
@@ -231,7 +283,7 @@ describe('/billing slash command (overlay-driven)', () => {
     await getOverlayState().billing!.ctx.charge('100')
     const out = printed(sys)
     expect(out).toContain(copy)
-    expect(out).not.toContain(t('slashCmd.topup.error.rateLimited', ''))
+    expect(out).not.toContain('Too many charges')
   })
 
   it('ctx.charge insufficient_scope → resolves needs_remote_spending (overlay routes to stepup)', async () => {
@@ -258,7 +310,10 @@ describe('/billing slash command (overlay-driven)', () => {
 
   // ── CF-4: revoked-terminal UX (kill the "15-minute zombie button") ──
 
-  it.each([['admin', t('slashCmd.topup.error.revokedByAdmin')]])(
+  it.each([
+    ['admin', 'An admin stopped remote spending for this terminal'],
+    ['self', 'You stopped remote spending for this terminal']
+  ])(
     'ctx.charge remote_spending_revoked (%s) → clears the overlay (no zombie button) + actor copy',
     async (actor, copy) => {
       const { run, sys } = buildCtx({
@@ -291,7 +346,7 @@ describe('/billing slash command (overlay-driven)', () => {
     getOverlayState().billing!.ctx.charge('100')
     await Promise.resolve()
     await Promise.resolve()
-    expect(printed(sys)).toContain(t('slashCmd.topup.error.sessionRevoked'))
+    expect(printed(sys)).toContain('Your session was logged out')
     expect(getOverlayState().billing).toBeNull()
   })
 
@@ -310,7 +365,7 @@ describe('/billing slash command (overlay-driven)', () => {
       return Promise.resolve(method === 'billing.charge' ? { ok: true, charge_id: 'ch_1', idempotency_key: 'k' } : null)
     })
     await getOverlayState().billing!.ctx.charge('100')
-    await vi.waitFor(() => expect(printed(sys)).toContain(t('slashCmd.topup.charge.unconfirmed')))
+    await vi.waitFor(() => expect(printed(sys)).toContain('outcome is unconfirmed'))
     expect(ctx.guardedErr).toHaveBeenCalled()
   })
 
@@ -332,7 +387,7 @@ describe('/billing slash command (overlay-driven)', () => {
     await Promise.resolve()
     await Promise.resolve()
     const out = printed(sys)
-    expect(out).toContain(t('slashCmd.topup.error.remoteSpendingDisabled'))
+    expect(out).toContain('Remote spending is off for this account')
     // Account-wide switch is NOT a per-terminal revoke — overlay stays open.
     expect(getOverlayState().billing).toBeTruthy()
   })
@@ -381,6 +436,32 @@ describe('/billing slash command (overlay-driven)', () => {
     await run('')
     const ok = await getOverlayState().billing!.ctx.applyAutoReload(true, 20, 100)
     expect(ok).toBe(false)
-    expect(printed(sys)).toContain(t('slashCmd.topup.error.monthlyCapExceeded'))
+    expect(printed(sys)).toContain('Monthly spend cap reached.')
+  })
+
+  it('ctx.charge → poll → processing_error has intentional failure copy', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const { run, sys } = buildCtx({
+        'billing.state': ownerState(),
+        'billing.charge': { ok: true, charge_id: 'ch_1', idempotency_key: 'k' },
+        'billing.charge_status': { ok: true, status: 'failed', reason: 'processing_error' }
+      })
+
+      await run('')
+      getOverlayState().billing!.ctx.charge('100')
+      await vi.runAllTimersAsync()
+      expect(printed(sys)).toContain("The charge didn't go through (processing_error).")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ctx.openPortal opens the URL + echoes a transcript line', async () => {
+    const { run, sys } = buildCtx({ 'billing.state': ownerState() })
+    await run('')
+    getOverlayState().billing!.ctx.openPortal('https://portal/x')
+    expect(printed(sys)).toContain('Opening portal: https://portal/x')
   })
 })

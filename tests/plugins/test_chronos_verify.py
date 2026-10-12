@@ -10,6 +10,7 @@ import time
 
 import pytest
 
+
 @pytest.fixture(scope="module")
 def rsa_keys():
     """An RS256 keypair: (private_pem, public_pem)."""
@@ -28,12 +29,15 @@ def rsa_keys():
     ).decode()
     return priv, pub
 
+
 def _mint(priv, claims):
     import jwt
     return jwt.encode(claims, priv, algorithm="RS256")
 
+
 AUD = "agent:inst-123"
 ISS = "https://portal.nousresearch.com"
+
 
 def _base_claims(**over):
     now = int(time.time())
@@ -48,6 +52,7 @@ def _base_claims(**over):
     c.update(over)
     return c
 
+
 def test_valid_token_returns_claims(rsa_keys):
     from plugins.cron_providers.chronos.verify import verify_nas_fire_token
 
@@ -59,6 +64,7 @@ def test_valid_token_returns_claims(rsa_keys):
     assert claims["purpose"] == "cron_fire"
     assert claims["aud"] == AUD
 
+
 def test_wrong_audience_rejected(rsa_keys):
     from plugins.cron_providers.chronos.verify import verify_nas_fire_token
 
@@ -66,6 +72,7 @@ def test_wrong_audience_rejected(rsa_keys):
     token = _mint(priv, _base_claims(aud="agent:someone-else"))
     assert verify_nas_fire_token(token=token, expected_audience=AUD,
                                  jwks_or_key=pub, issuer=ISS) is None
+
 
 def test_missing_purpose_rejected(rsa_keys):
     """A general agent JWT (no purpose=cron_fire) can't fire jobs."""
@@ -78,6 +85,7 @@ def test_missing_purpose_rejected(rsa_keys):
     assert verify_nas_fire_token(token=token, expected_audience=AUD,
                                  jwks_or_key=pub, issuer=ISS) is None
 
+
 def test_expired_token_rejected(rsa_keys):
     from plugins.cron_providers.chronos.verify import verify_nas_fire_token
 
@@ -86,6 +94,7 @@ def test_expired_token_rejected(rsa_keys):
     token = _mint(priv, _base_claims(iat=now - 1000, nbf=now - 1000, exp=now - 600))
     assert verify_nas_fire_token(token=token, expected_audience=AUD,
                                  jwks_or_key=pub, issuer=ISS) is None
+
 
 def test_tampered_signature_rejected(rsa_keys):
     """A token signed by a DIFFERENT key must fail signature verification."""
@@ -105,6 +114,7 @@ def test_tampered_signature_rejected(rsa_keys):
     assert verify_nas_fire_token(token=token, expected_audience=AUD,
                                  jwks_or_key=pub, issuer=ISS) is None
 
+
 def test_no_key_configured_refuses(rsa_keys):
     """No JWKS/key configured → refuse (never fall back to unsigned decode)."""
     from plugins.cron_providers.chronos.verify import verify_nas_fire_token
@@ -114,11 +124,13 @@ def test_no_key_configured_refuses(rsa_keys):
     assert verify_nas_fire_token(token=token, expected_audience=AUD,
                                  jwks_or_key=None) is None
 
+
 def test_empty_token_refused(rsa_keys):
     from plugins.cron_providers.chronos.verify import verify_nas_fire_token
 
     _, pub = rsa_keys
     assert verify_nas_fire_token(token="", expected_audience=AUD, jwks_or_key=pub) is None
+
 
 def test_jwks_url_path_resolves_key(rsa_keys, monkeypatch):
     """The JWKS-URL branch resolves the signing key via PyJWKClient."""
@@ -148,6 +160,7 @@ def test_jwks_url_path_resolves_key(rsa_keys, monkeypatch):
     )
     assert claims is not None and claims["purpose"] == "cron_fire"
 
+
 def test_jwks_client_sends_explicit_http_headers(monkeypatch):
     """Constructor-contract regression: the JWKS fetch must send an explicit
     Accept + User-Agent so it isn't blocked by the NAS portal WAF (same fix as
@@ -168,5 +181,13 @@ def test_jwks_client_sends_explicit_http_headers(monkeypatch):
     verify_mod._get_jwk_client(url)
 
     assert captured["url"] == url
-    headers = captured["kwargs"].get("headers") or {}
-    assert headers.get("Accept") and headers.get("User-Agent")
+    assert captured["kwargs"].get("headers") == {
+        "Accept": "application/json",
+        "User-Agent": "HermesAgent/1.0",
+    }
+
+
+def test_get_fire_verifier_returns_nas_verifier():
+    from plugins.cron_providers.chronos.verify import get_fire_verifier, verify_nas_fire_token
+
+    assert get_fire_verifier() is verify_nas_fire_token

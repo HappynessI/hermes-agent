@@ -28,7 +28,7 @@ import {
   DASHBOARD_MODAL_PANEL,
   shouldCloseOuterModalOnEscape,
 } from "@/lib/dashboard-modal-shell";
-import { compactNumber } from "@hermes/shared";
+import { formatTokenCount } from "@/lib/format";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Stats } from "@nous-research/ui/ui/components/stats";
@@ -42,7 +42,6 @@ import { useI18n } from "@/i18n";
 import { PluginSlot } from "@/plugins";
 import { ModelPickerDialog } from "@/components/ModelPickerDialog";
 import { ModelReloadConfirm } from "@/components/ModelReloadConfirm";
-import { errorMessage } from "@/lib/api-error";
 
 const PERIODS = [
   { label: "7d", days: 7 },
@@ -53,12 +52,12 @@ const PERIODS = [
 // Must match _AUX_TASK_SLOTS in hermes_cli/web_server.py.
 const AUX_TASKS: readonly { key: string; label: string; hint: string }[] = [
   { key: "vision", label: "Vision", hint: "Image analysis" },
+  { key: "web_extract", label: "Web Extract", hint: "Page summarization" },
   { key: "compression", label: "Compression", hint: "Context compaction" },
   { key: "skills_hub", label: "Skills Hub", hint: "Skill search" },
   { key: "approval", label: "Approval", hint: "Smart auto-approve" },
   { key: "mcp", label: "MCP", hint: "MCP tool routing" },
   { key: "title_generation", label: "Title Gen", hint: "Session titles" },
-  { key: "review", label: "Review", hint: "/review subagent" },
   { key: "triage_specifier", label: "Triage Specifier", hint: "Kanban spec fleshing" },
   { key: "kanban_decomposer", label: "Kanban Decomposer", hint: "Task decomposition" },
   { key: "profile_describer", label: "Profile Describer", hint: "Auto profile descriptions" },
@@ -258,7 +257,7 @@ function UseAsMenu({
       onAssigned();
       setOpen(false);
     } catch (e) {
-      setError(errorMessage(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -431,12 +430,12 @@ function ModelCard({
               )}
               {caps.context_window && caps.context_window > 0 && (
                 <span className="text-xs text-text-secondary">
-                  {compactNumber(caps.context_window)} ctx
+                  {formatTokenCount(caps.context_window)} ctx
                 </span>
               )}
               {caps.max_output_tokens && caps.max_output_tokens > 0 && (
                 <span className="text-xs text-text-secondary">
-                  {compactNumber(caps.max_output_tokens)} out
+                  {formatTokenCount(caps.max_output_tokens)} out
                 </span>
               )}
             </div>
@@ -752,7 +751,7 @@ function MoaModelsModal({
       onSaved(saved);
       onClose();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -768,7 +767,7 @@ function MoaModelsModal({
       aggregator_temperature: draft.aggregator_temperature,
       reference_timeout: draft.reference_timeout,
       degraded_reference_policy: draft.degraded_reference_policy,
-
+      max_tokens: draft.max_tokens,
       enabled: draft.enabled,
     };
     setDraft((prev) => ({
@@ -1162,7 +1161,7 @@ export default function ModelsPage() {
         setData(models);
         setAux(auxData);
       })
-      .catch((err) => setError(errorMessage(err)))
+      .catch((err) => setError(String(err)))
       .finally(() => setLoading(false));
   }, [days]);
 

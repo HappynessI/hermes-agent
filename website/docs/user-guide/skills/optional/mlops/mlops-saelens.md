@@ -1,12 +1,12 @@
 ---
-title: "Saelens — Train sparse autoencoders to interpret model features"
-sidebar_label: "Saelens"
+title: "Sparse Autoencoder Training — Train sparse autoencoders to interpret model features"
+sidebar_label: "Sparse Autoencoder Training"
 description: "Train sparse autoencoders to interpret model features"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# Saelens
+# Sparse Autoencoder Training
 
 Train sparse autoencoders to interpret model features.
 

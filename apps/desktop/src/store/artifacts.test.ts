@@ -11,7 +11,8 @@ import {
   selectArtifactVersion,
   upsertArtifact
 } from './artifacts'
-import { $rightRailActiveTabId } from './layout'
+import { $rightRailActiveTabId, PREVIEW_PANE_ID } from './layout'
+import { $paneOpen } from './panes'
 import { $previewTabs, closeRightRail, closeRightRailTab } from './preview'
 import { $activeSessionId, $selectedStoredSessionId } from './session'
 
@@ -93,6 +94,7 @@ describe('artifacts store', () => {
 
     expect(tab.target).toMatchObject({ kind: 'artifact', label: 'Pomodoro Timer', url: result.artifactId })
     expect($rightRailActiveTabId.get()).toBe(tab.id)
+    expect($paneOpen(PREVIEW_PANE_ID).get()).toBe(true)
 
     closeRightRailTab(tab.id)
 
@@ -114,9 +116,7 @@ describe('artifacts store', () => {
 
     openArtifact(result.artifactId)
 
-    // Artifact tabs are never persistable, so the profile's bucket stays empty
-    // and the key is removed rather than stored as an empty list.
-    expect(window.localStorage.getItem('hermes.desktop.previewTabs.v2')).toBeNull()
+    expect(window.localStorage.getItem('hermes.desktop.previewTabs.v2')).toBe('[]')
   })
 
   it('tracks version selection and snaps back to latest', () => {

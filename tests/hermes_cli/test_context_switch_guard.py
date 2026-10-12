@@ -22,12 +22,7 @@ def _result(*, model: str = "small-model") -> ModelSwitchResult:
     )
 
 
-def _compressor(
-    monkeypatch,
-    *,
-    context_length: int = 200_000,
-    threshold_tokens_cap: int | None = None,
-):
+def _compressor(monkeypatch, *, context_length: int = 200_000):
     from agent.context_compressor import ContextCompressor
 
     monkeypatch.setattr(
@@ -41,7 +36,6 @@ def _compressor(
         protect_last_n=20,
         quiet_mode=True,
         config_context_length=context_length,
-        threshold_tokens_cap=threshold_tokens_cap,
     )
 
 
@@ -70,35 +64,6 @@ def test_merge_appends_to_existing_warning(monkeypatch):
     assert "preflight compression" in result.warning_message
 
 
-def test_cap_lowers_the_switch_warning_threshold_below_the_ratio(monkeypatch):
-    """The warning quotes the trigger the compressor will install: on a 1M target the ratio alone says
-    500K (no warning at 300K in-flight), the cap says less — the guard must warn with the capped number."""
-    cap = 256_000
-    monkeypatch.setattr(
-        "hermes_cli.context_switch_guard._estimate_tokens",
-        lambda *a, **k: 300_000,
-    )
-    monkeypatch.setattr(
-        "hermes_cli.context_switch_guard.resolve_display_context_length",
-        lambda *a, **k: 1_000_000,
-    )
-    cc = _compressor(
-        monkeypatch,
-        context_length=200_000,
-        threshold_tokens_cap=cap,
-    )
-    agent = SimpleNamespace(
-        context_compressor=cc,
-        compression_enabled=True,
-        base_url="",
-        api_key="",
-    )
-
-    result = _result(model="large-model")
-    merge_preflight_compression_warning(result, agent=agent)
-
-    assert "preflight compression" in result.warning_message
-    assert f"auto-compress at ~{cap:,}" in result.warning_message
 
 
 def test_custom_provider_context_avoids_false_shrink_warning(monkeypatch):
@@ -114,7 +79,7 @@ def test_custom_provider_context_avoids_false_shrink_warning(monkeypatch):
             "name": "qwen-token-plan",
             "base_url": "https://token-plan.example/compatible-mode/v1",
             "models": {
-                "qwen3.9-max-preview": {"context_length": 1_048_576},
+                "qwen3.8-max-preview": {"context_length": 1_048_576},
             },
         }
     ]
@@ -145,7 +110,7 @@ def test_custom_provider_context_avoids_false_shrink_warning(monkeypatch):
     )
     result = ModelSwitchResult(
         success=True,
-        new_model="qwen3.9-max-preview",
+        new_model="qwen3.8-max-preview",
         target_provider="qwen-token-plan",
         provider_changed=True,
         api_key="k",
@@ -166,7 +131,7 @@ def test_custom_provider_context_avoids_false_shrink_warning(monkeypatch):
     # Agent snapshot alone (classic CLI historically forgot to pass the kwarg).
     result2 = ModelSwitchResult(
         success=True,
-        new_model="qwen3.9-max-preview",
+        new_model="qwen3.8-max-preview",
         target_provider="qwen-token-plan",
         provider_changed=True,
         api_key="k",
@@ -191,7 +156,7 @@ def test_custom_provider_context_avoids_false_shrink_warning(monkeypatch):
     )
     result3 = ModelSwitchResult(
         success=True,
-        new_model="qwen3.9-max-preview",
+        new_model="qwen3.8-max-preview",
         target_provider="qwen-token-plan",
         provider_changed=True,
         api_key="k",

@@ -11,7 +11,6 @@ import {
 } from '@/components/ui/context-menu'
 import { translateNow, useI18n } from '@/i18n'
 import { isDesktopFsRemoteMode } from '@/lib/desktop-fs'
-import { isSubmitEnter } from '@/lib/ime'
 import { IS_MAC } from '@/lib/keybinds/combo'
 import { cn } from '@/lib/utils'
 import {
@@ -20,13 +19,11 @@ import {
   cancelInlineRename,
   closeFileActionDialog,
   copyFilePath,
-  downloadRemoteFile,
   executeFileDelete,
   executeFileRename,
   type FileActionTarget,
   requestFileDelete,
   revealFile,
-  shouldOfferRemoteFileDownload,
   toRelativePath
 } from '@/store/file-actions'
 import { notifyError } from '@/store/notifications'
@@ -60,10 +57,8 @@ export function FileEntryContextMenu({ children, isDirectory, name, path, relati
   const { t } = useI18n()
   const m = t.fileMenu
   // Reveal / rename / delete need the local filesystem; hide them on a remote
-  // backend (copy-path still works everywhere). Download uses the existing
-  // gateway save bridge so a remote file can land on this machine.
+  // backend (copy-path still works everywhere).
   const localFs = !isDesktopFsRemoteMode()
-  const remoteDownload = shouldOfferRemoteFileDownload(isDirectory)
   const target: FileActionTarget = { isDirectory, name, path }
   const revealLabel = pickRevealLabel(m.revealFinder, m.revealExplorer, m.revealFileManager)
 
@@ -84,12 +79,6 @@ export function FileEntryContextMenu({ children, isDirectory, name, path, relati
           <ContextMenuItem onSelect={() => void copyFilePath(toRelativePath(path, relativeTo))}>
             {m.copyRelativePath}
           </ContextMenuItem>
-        )}
-        {remoteDownload && (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => void downloadRemoteFile(path)}>{m.download}</ContextMenuItem>
-          </>
         )}
         {localFs && (
           <>
@@ -198,7 +187,7 @@ export function InlineRenameInput({ className, name, path }: InlineRenameInputPr
       onKeyDown={event => {
         event.stopPropagation()
 
-        if (isSubmitEnter(event)) {
+        if (event.key === 'Enter') {
           event.preventDefault()
           void finish(true)
         } else if (event.key === 'Escape') {

@@ -22,13 +22,6 @@ vi.mock('@/store/notifications', () => ({
   notifyError: vi.fn()
 }))
 
-// Load the panel once at module scope, outside every test timeout. The first
-// in-test `await import` paid the whole transform + import inside test one's
-// 15s budget — the recurring CI timeout — and the late-finishing import could
-// leak its first render into the next test ("multiple Honcho settings
-// buttons").
-const { ProviderConfigPanel } = await import('./provider-config-panel')
-
 function honchoSchema(): MemoryProviderConfig {
   return {
     name: 'honcho',
@@ -115,11 +108,22 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-function renderPanel(provider = 'honcho') {
+async function renderPanel(provider = 'honcho') {
+  const { ProviderConfigPanel } = await import('./provider-config-panel')
+
   return render(<ProviderConfigPanel provider={provider} />)
 }
 
 describe('ProviderConfigPanel', () => {
+  it('renders the declared inline fields generically', async () => {
+    await renderPanel()
+
+    expect(await screen.findByDisplayValue('myws')).toBeTruthy()
+    expect(screen.getByPlaceholderText('https://… (self-hosted)')).toBeTruthy()
+    expect(screen.getByText('Production')).toBeTruthy()
+    expect(screen.getByText('Self-hosted Honcho URL.')).toBeTruthy()
+  })
+
   it('hides fields that are not marked inline', async () => {
     await renderPanel()
 
@@ -173,6 +177,13 @@ describe('ProviderConfigPanel', () => {
 
     await waitFor(() => expect(saveMemoryProviderConfig).toHaveBeenCalledWith('honcho', { apiKey: 'hch-new-key' }))
     await waitFor(() => expect((apiKey as HTMLInputElement).value).toBe(''))
+  })
+
+  it('offers a full-config trigger when modal-only fields exist', async () => {
+    await renderPanel()
+
+    await screen.findByDisplayValue('myws')
+    expect(screen.getByRole('button', { name: /Full config/ })).toBeTruthy()
   })
 
   it('shows an inline error with retry when the load fails, then recovers', async () => {

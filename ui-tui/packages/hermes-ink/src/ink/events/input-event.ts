@@ -2,20 +2,8 @@ import { nonAlphanumericKeys, type ParsedKey } from '../parse-keypress.js'
 
 import { Event } from './event.js'
 
-const inputForSpecialSequence = (name: string, shift: boolean): string => {
-  const input = name === 'space' ? ' ' : name === 'return' || name === 'escape' ? '' : name
-
-  // Extended-key protocols (CSI u / xterm modifyOtherKeys) report printable
-  // letters as their lowercase keycode, so Shift+R arrives as name 'r' with
-  // shift=true. Re-apply shift to a single lowercase letter so the composer
-  // receives 'R', not 'r'. Keybinding consumers still see the lowercase
-  // canonical name via key.name — only the inserted text is case-restored.
-  if (shift && input.length === 1 && input >= 'a' && input <= 'z') {
-    return input.toUpperCase()
-  }
-
-  return input
-}
+const inputForSpecialSequence = (name: string): string =>
+  name === 'space' ? ' ' : name === 'return' || name === 'escape' ? '' : name
 
 export type Key = {
   upArrow: boolean
@@ -124,7 +112,7 @@ function parseKey(keypress: ParsedKey): [Key, string] {
       // so the raw "[57358u" doesn't leak into the prompt. See #38781.
       input = ''
     } else {
-      input = inputForSpecialSequence(keypress.name, keypress.shift)
+      input = inputForSpecialSequence(keypress.name)
     }
 
     processedAsSpecialSequence = true
@@ -142,7 +130,7 @@ function parseKey(keypress: ParsedKey): [Key, string] {
       // guards against future terminal behavior.
       input = ''
     } else {
-      input = inputForSpecialSequence(keypress.name, keypress.shift)
+      input = inputForSpecialSequence(keypress.name)
     }
 
     processedAsSpecialSequence = true
@@ -172,25 +160,7 @@ function parseKey(keypress: ParsedKey): [Key, string] {
   return [key, input]
 }
 
-/**
- * A ctrl chord is never typed text — but `parseKeypress` names a C0 control
- * byte after the letter it encodes (0x0c → 'l'), an extended-protocol chord
- * (kitty CSI u / xterm modifyOtherKeys `ESC [ 108 ; 5 u`) after its keycode,
- * and `parseKey` above hands that name to `input` so bindings can still match
- * ctrl+<letter>. Text inserters must not read the name as input: the dashboard
- * writes the PTY force-redraw byte Ctrl+L (0x0c, `hermes_cli/pty_session.py`
- * TUI_FORCE_REDRAW) into the TUI's stdin on every re-attach, which typed a
- * solitary `l` into the composer after a session resume / tab switch / window
- * restore (#115284). Bracketed pastes are text even when a control byte rides
- * inside them, so they are never a chord.
- */
-function isControlChord(keypress: ParsedKey): boolean {
-  return keypress.ctrl && !keypress.isPasted
-}
-
 export class InputEvent extends Event {
-  /** `input` is a ctrl chord's binding name, not text the user typed. */
-  readonly isControlChord: boolean
   readonly keypress: ParsedKey
   readonly key: Key
   readonly input: string
@@ -199,7 +169,6 @@ export class InputEvent extends Event {
     super()
     const [key, input] = parseKey(keypress)
 
-    this.isControlChord = isControlChord(keypress)
     this.keypress = keypress
     this.key = key
     this.input = input

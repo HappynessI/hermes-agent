@@ -1,15 +1,6 @@
-import { SLASH_COMMAND_RE } from '@hermes/shared'
 import { atom } from 'nanostores'
 
-import { type ComposerAttachment, revokeAttachmentPreviewUrls, revokeDiscardedAttachmentPreviews } from './composer'
-
-export interface RemoveQueuedPromptOptions {
-  /**
-   * When true, leave blob: preview URLs alive because submit/optimistic now
-   * owns the snapshot (drain handoff). Default false = entry discarded.
-   */
-  retainPreviewUrls?: boolean
-}
+import type { ComposerAttachment } from './composer'
 
 export interface QueuedPromptEntry {
   id: string
@@ -18,26 +9,8 @@ export interface QueuedPromptEntry {
    *  text the agent receives. A queued `/skill` invocation carries the whole
    *  expanded skill body as `text` — the UI shows the invocation instead. */
   displayText?: string
-  /** A hidden note (a setup line for the model) parked while the turn ran. The panel
-   *  shows a neutral label and the drain submits it hidden again. */
-  displayKind?: 'hidden'
-  /** Consecutive auto-drain attempts that rejected this entry, persisted with
-   *  the queue so a restart does not replay the whole retry ladder (and its
-   *  exhaustion notice) for a session that is just as dead as before (#98015).
-   *  A user gesture — manual send, redirect, queueing a fresh prompt — clears
-   *  it, exactly like the composer's in-process counter. */
-  drainFailures?: number
   attachments: ComposerAttachment[]
   queuedAt: number
-}
-
-/** Whether a queued entry can ride a mid-turn redirect: text-only, non-empty,
- *  not a slash command — the same gate `steerDraft` applies to the live draft
- *  (attachments can't ride a redirect; slash commands execute, not steer). */
-export const isSteerableEntry = (entry: Pick<QueuedPromptEntry, 'attachments' | 'text'>): boolean => {
-  const text = entry.text.trim()
-
-  return Boolean(text) && entry.attachments.length === 0 && !SLASH_COMMAND_RE.test(text)
 }
 
 type QueueState = Record<string, QueuedPromptEntry[]>
@@ -105,42 +78,20 @@ const setParked = (sid: string, parked: boolean) => {
 }
 
 const writeSession = (sid: string, queue: QueuedPromptEntry[]) => {
-  // Merge over the LIVE persisted map, not the in-memory atom: another window
-  // may have written its own sessions' queues between our last sync and now,
-  // and writing our whole snapshot back would clobber those entries (#46732).
-  const live = load()
-  const next: QueueState = { ...live }
+  const current = $queuedPromptsBySession.get()
+  const next = { ...current }
 
   if (queue.length === 0) {
     delete next[sid]
+    // An empty queue has nothing to hold back — drop the park so it can't
+    // linger as stale state and silently gate entries queued much later.
+    setParked(sid, false)
   } else {
     next[sid] = queue
   }
 
   $queuedPromptsBySession.set(next)
   save(next)
-
-  if (queue.length === 0) {
-    // An empty queue has nothing to hold back — drop the park so it can't
-    // linger as stale state and silently gate entries queued much later.
-    setParked(sid, false)
-  }
-}
-
-if (typeof window !== 'undefined') {
-  // Cross-window sync (#46732): every desktop window boots the queue atom from
-  // the same localStorage key. The `storage` event fires in every window EXCEPT
-  // the writer, so there is no self-echo to guard — adopting the fresh map here
-  // keeps the other windows' entries from vanishing (their writes clobbered
-  // ours) or resurrecting (our stale snapshot re-queued what they drained).
-  // `event.key === null` is the full-clear signal (localStorage.clear()).
-  window.addEventListener('storage', event => {
-    if (event.key !== null && event.key !== STORAGE_KEY) {
-      return
-    }
-
-    $queuedPromptsBySession.set(load())
-  })
 }
 
 const sidOf = (key: string | null | undefined): null | string => {
@@ -163,7 +114,7 @@ export const getQueuedPrompts = (key: string | null | undefined): QueuedPromptEn
 
 export const enqueueQueuedPrompt = (
   key: string | null | undefined,
-  payload: { text: string; attachments: ComposerAttachment[]; displayText?: string; displayKind?: 'hidden' }
+  payload: { text: string; attachments: ComposerAttachment[]; displayText?: string }
 ): null | QueuedPromptEntry => {
   const sid = sidOf(key)
 
@@ -175,18 +126,11 @@ export const enqueueQueuedPrompt = (
     id: nextId(),
     text: payload.text,
     ...(payload.displayText ? { displayText: payload.displayText } : {}),
-    ...(payload.displayKind ? { displayKind: payload.displayKind } : {}),
     attachments: cloneAttachments(payload.attachments),
     queuedAt: Date.now()
   }
 
-  writeSession(
-    sid,
-    // Queueing a fresh prompt is fresh intent to keep the conversation
-    // moving — lift the persisted drain-failure budget off the entries
-    // already waiting there, exactly like the park (#98015).
-    [...queueFor(sid).map(e => (e.drainFailures ? { ...e, drainFailures: undefined } : e)), entry]
-  )
+  writeSession(sid, [...queueFor(sid), entry])
   // Queueing a new prompt is fresh intent to keep the conversation moving —
   // a park from an earlier Stop must not hold this (or the entries ahead of
   // it) back.
@@ -208,17 +152,12 @@ export const dequeueQueuedPrompt = (key: string | null | undefined): null | Queu
     return null
   }
 
-  // Caller takes ownership of head.attachments (including any blob: previews).
   writeSession(sid, rest)
 
   return head
 }
 
-export const removeQueuedPrompt = (
-  key: string | null | undefined,
-  id: string,
-  options?: RemoveQueuedPromptOptions
-): boolean => {
+export const removeQueuedPrompt = (key: string | null | undefined, id: string): boolean => {
   const sid = sidOf(key)
 
   if (!sid) {
@@ -226,66 +165,15 @@ export const removeQueuedPrompt = (
   }
 
   const queue = queueFor(sid)
-  const removed = queue.find(e => e.id === id)
   const next = queue.filter(e => e.id !== id)
 
-  if (!removed || next.length === queue.length) {
+  if (next.length === queue.length) {
     return false
   }
 
   writeSession(sid, next)
 
-  if (!options?.retainPreviewUrls) {
-    revokeAttachmentPreviewUrls(removed.attachments)
-  }
-
   return true
-}
-
-/** Count one more rejected auto-drain attempt against a queued entry and
- *  persist it with the queue (#98015). The in-process retry ladder stays
- *  identical; only its budget survives restarts, so a session that is dead in
- *  this process is not retried four more times on every future launch. */
-export const noteQueuedPromptDrainFailure = (key: string | null | undefined, id: string): void => {
-  const sid = sidOf(key)
-
-  if (!sid) {
-    return
-  }
-
-  const queue = queueFor(sid)
-
-  if (!queue.some(e => e.id === id)) {
-    return
-  }
-
-  writeSession(
-    sid,
-    queue.map(e => (e.id === id ? { ...e, drainFailures: (e.drainFailures ?? 0) + 1 } : e))
-  )
-}
-
-/** Clear a queued entry's persisted drain-failure budget — the queue-panel
- *  sibling of the composer's in-process counter reset. Called on the user
- *  gestures that express fresh intent to send (manual send, redirect, and
- *  implicitly by removal on success). */
-export const clearQueuedPromptDrainFailures = (key: string | null | undefined, id: string): void => {
-  const sid = sidOf(key)
-
-  if (!sid) {
-    return
-  }
-
-  const queue = queueFor(sid)
-
-  if (!queue.some(e => e.id === id && e.drainFailures)) {
-    return
-  }
-
-  writeSession(
-    sid,
-    queue.map(e => (e.id === id ? { ...e, drainFailures: undefined } : e))
-  )
 }
 
 export const promoteQueuedPrompt = (key: string | null | undefined, id: string): boolean => {
@@ -333,10 +221,6 @@ export const updateQueuedPrompt = (
       return entry
     }
 
-    if (update.attachments) {
-      revokeDiscardedAttachmentPreviews(entry.attachments, attachments)
-    }
-
     changed = true
 
     // The user rewrote the text, so any display projection it carried (a
@@ -366,10 +250,6 @@ export const clearQueuedPrompts = (key: string | null | undefined) => {
     return
   }
 
-  for (const entry of queueFor(sid)) {
-    revokeAttachmentPreviewUrls(entry.attachments)
-  }
-
   writeSession(sid, [])
 }
 
@@ -394,12 +274,9 @@ export const migrateQueuedPrompts = (fromKey: string | null | undefined, toKey: 
     return false
   }
 
-  // Merge over the live persisted map (see writeSession) so the migration can't
-  // clobber entries another window queued meanwhile — including into `to`.
-  const live = load()
-  const next: QueueState = { ...live }
+  const next = { ...$queuedPromptsBySession.get() }
   delete next[from]
-  next[to] = [...(live[to] ?? queueFor(to)), ...pending]
+  next[to] = [...queueFor(to), ...pending]
 
   $queuedPromptsBySession.set(next)
   save(next)

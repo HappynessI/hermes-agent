@@ -291,9 +291,9 @@ cat > ~/Library/LaunchAgents/com.qmd.daemon.plist << 'EOF'
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/YOU/.hermes/cache/scratch/qmd-daemon.log</string>
+  <string>/tmp/qmd-daemon.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/YOU/.hermes/cache/scratch/qmd-daemon.log</string>
+  <string>/tmp/qmd-daemon.log</string>
 </dict>
 </plist>
 EOF

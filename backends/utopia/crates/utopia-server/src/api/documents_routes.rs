@@ -1,0 +1,741 @@
+use axum::extract::FromRequestParts;
+use axum::extract::{Multipart, Path, Query, State};
+use axum::http::request::Parts;
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+use axum_extra::extract::cookie::CookieJar;
+use percent_encoding::{percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use serde::Deserialize;
+use serde_json::json;
+use sha2::{Digest, Sha256};
+use utopia_core::models::{Document, Role};
+use utopia_core::AppError;
+use utopia_store::tokens::Authenticated;
+use uuid::Uuid;
+
+use crate::auth::AuthUser;
+use crate::error::ApiErr;
+use crate::error::ApiResult;
+use crate::state::AppState;
+
+#[derive(Deserialize)]
+pub struct UploadQuery {
+    /// 目标 folder 来源：上传直接归入该文件夹（仅 kind=folder 接受上传）
+    #[serde(default)]
+    pub source: Option<Uuid>,
+}
+
+const PAT_PREFIX: &str = utopia_store::tokens::PREFIX;
+
+/// Web session or personal access token, resolved far enough to enforce both
+/// identity and token scope.
+///
+/// `AuthUser` cannot play this role: it interprets every bearer string as a
+/// JWT, so the PAT designed for API clients would become a 401 before the
+/// route could apply its Viewer check.
+pub struct DocumentReader {
+    pub user: utopia_core::models::User,
+    pub pat: Option<Authenticated>,
+}
+
+impl FromRequestParts<AppState> for DocumentReader {
+    type Rejection = ApiErr;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let raw = CookieJar::from_headers(&parts.headers)
+            .get(crate::auth::COOKIE_NAME)
+            .map(|cookie| cookie.value().to_string())
+            .or_else(|| {
+                parts
+                    .headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.strip_prefix("Bearer "))
+                    .map(str::to_owned)
+            })
+            .ok_or(AppError::Unauthorized)?;
+
+        if raw.starts_with(PAT_PREFIX) {
+            let auth = utopia_store::tokens::authenticate(&state.pool, raw.trim()).await?;
+            let user = utopia_store::accounts::find_user_by_id(&state.pool, auth.user_id)
+                .await?
+                .ok_or(AppError::Unauthorized)?;
+            return Ok(Self {
+                user,
+                pat: Some(auth),
+            });
+        }
+
+        let user_id = crate::auth::decode_user_id(state, &raw)?;
+        let user = utopia_store::accounts::find_user_by_id(&state.pool, user_id)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        Ok(Self { user, pat: None })
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ContentQuery {
+    #[serde(default)]
+    pub version: Option<i32>,
+}
+
+const PURGED_MESSAGE: &str = "The document contents have been purged";
+
+fn gone(message: &'static str) -> Response {
+    (StatusCode::GONE, Json(json!({ "error": message }))).into_response()
+}
+
+fn missing_blob_invariant(document_id: Uuid, sha256: &str) -> AppError {
+    AppError::Other(anyhow::anyhow!(
+        "document {document_id} ledger references unavailable blob {sha256}"
+    ))
+}
+
+fn content_disposition(filename: &str) -> String {
+    const FILENAME: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove(b'_');
+
+    let fallback: String = filename
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let encoded = percent_encode(filename.as_bytes(), FILENAME);
+    format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
+}
+
+fn content_headers(
+    document: &Document,
+    version: &utopia_store::documents::DocumentVersion,
+    byte_count: usize,
+) -> ApiResult<HeaderMap> {
+    let mime = HeaderValue::from_str(&document.mime)
+        .map_err(|_| anyhow::anyhow!("document {} has an invalid MIME header", document.id))?;
+    let disposition = HeaderValue::from_str(&content_disposition(&document.filename))
+        .map_err(|_| anyhow::anyhow!("document {} has an unsafe filename", document.id))?;
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, mime);
+    headers.insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&byte_count.to_string())
+            .map_err(|_| anyhow::anyhow!("content length is not a valid header"))?,
+    );
+    headers.insert(
+        header::ETAG,
+        HeaderValue::from_str(&format!("\"{}\"", version.sha256))
+            .map_err(|_| anyhow::anyhow!("document digest is not a valid header"))?,
+    );
+    headers.insert(header::CONTENT_DISPOSITION, disposition);
+    Ok(headers)
+}
+
+async fn require_reader_kb(
+    state: &AppState,
+    reader: &DocumentReader,
+    kb_id: Uuid,
+) -> ApiResult<()> {
+    utopia_store::access::require_kb(&state.pool, &reader.user, kb_id, Role::Viewer).await?;
+    if let Some(pat) = &reader.pat {
+        if !pat.covers(kb_id) {
+            return Err(AppError::NotFound.into());
+        }
+    }
+    Ok(())
+}
+
+/// Serve the retained original named by the document ledger.
+pub async fn content(
+    State(state): State<AppState>,
+    reader: DocumentReader,
+    Path(id): Path<Uuid>,
+    Query(query): Query<ContentQuery>,
+) -> ApiResult<Response> {
+    if query.version.is_some_and(|version| version < 1) {
+        return Err(AppError::invalid("bad_version", "Version must be 1 or greater").into());
+    }
+    let document = utopia_store::documents::get(&state.pool, id).await?;
+    require_reader_kb(&state, &reader, document.kb_id).await?;
+    if document.purged_at.is_some() {
+        return Ok(gone(PURGED_MESSAGE));
+    }
+
+    // Hold the row lock through the blob read. Replacement and purge otherwise
+    // can move or delete the selected blob after the ledger says we may serve it.
+    let mut tx = state.pool.begin().await?;
+    let document: Document =
+        sqlx::query_as("SELECT * FROM documents WHERE id = $1 FOR NO KEY UPDATE")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if document.purged_at.is_some() {
+        return Ok(gone(PURGED_MESSAGE));
+    }
+    let version: utopia_store::documents::DocumentVersion = match query.version {
+        Some(requested) => sqlx::query_as(
+            "SELECT version, sha256, size_bytes, ingested_at
+               FROM document_versions WHERE document_id = $1 AND version = $2",
+        )
+        .bind(id)
+        .bind(requested)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(AppError::NotFound)?,
+        None => sqlx::query_as(
+            "SELECT version, sha256, size_bytes, ingested_at
+               FROM document_versions WHERE document_id = $1 AND sha256 = $2
+               ORDER BY version DESC LIMIT 1",
+        )
+        .bind(id)
+        .bind(&document.sha256)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "document {} has no ledger version for its current digest",
+                id
+            )
+        })?,
+    };
+    let bytes = state
+        .blob
+        .get(&version.sha256)
+        .await
+        .map_err(|_| missing_blob_invariant(id, &version.sha256))?;
+    tx.commit().await?;
+
+    if version.size_bytes != bytes.len() as i64 {
+        return Err(anyhow::anyhow!(
+            "document {} version {} has an inaccurate ledger size",
+            id,
+            version.version
+        )
+        .into());
+    }
+    let headers = content_headers(&document, &version, bytes.len())?;
+    Ok((StatusCode::OK, headers, bytes).into_response())
+}
+
+/// Name the exact retained versions the content route can address.
+pub async fn versions(
+    State(state): State<AppState>,
+    reader: DocumentReader,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Response> {
+    let document = utopia_store::documents::get(&state.pool, id).await?;
+    require_reader_kb(&state, &reader, document.kb_id).await?;
+    if document.purged_at.is_some() {
+        return Ok(gone(PURGED_MESSAGE));
+    }
+    let versions = utopia_store::documents::versions(&state.pool, id).await?;
+    Ok((StatusCode::OK, Json(json!({ "versions": versions }))).into_response())
+}
+
+/// 批量上传（multipart，可多文件）。重复内容（同 KB 同 sha256）跳过。
+pub async fn upload(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(kb_id): Path<Uuid>,
+    Query(q): Query<UploadQuery>,
+    mut multipart: Multipart,
+) -> ApiResult<Json<serde_json::Value>> {
+    utopia_store::access::require_kb(&state.pool, &user, kb_id, Role::Editor).await?;
+    let target_source = match q.source {
+        Some(sid) => {
+            let src = utopia_store::sources::get(&state.pool, sid).await?;
+            if src.kb_id != kb_id || src.kind != "folder" {
+                return Err(AppError::invalid(
+                    "upload_needs_folder",
+                    "Uploads can only target a folder source in this knowledge base",
+                )
+                .into());
+            }
+            Some(sid)
+        }
+        None => None,
+    };
+
+    let mut created: Vec<Document> = Vec::new();
+    let mut skipped: Vec<serde_json::Value> = Vec::new();
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::invalid_detail("bad_upload", "Malformed upload", e.to_string()))?
+    {
+        let Some(filename) = field.file_name().map(String::from) else {
+            continue;
+        };
+        let mime = field
+            .content_type()
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let bytes = field.bytes().await.map_err(|e| {
+            AppError::invalid_detail("upload_read_failed", "Failed to read upload", e.to_string())
+        })?;
+        if bytes.is_empty() {
+            skipped.push(json!({ "filename": filename, "reason": "empty file" }));
+            continue;
+        }
+
+        let sha256 = hex(&Sha256::digest(&bytes));
+        state
+            .blob
+            .put(&sha256, &bytes)
+            .await
+            .map_err(AppError::Other)?;
+
+        match utopia_store::documents::create_from_upload(
+            &state.pool,
+            kb_id,
+            &filename,
+            &mime,
+            bytes.len() as i64,
+            &sha256,
+            target_source,
+            content_time(&filename, &bytes),
+        )
+        .await
+        {
+            Ok(doc) => {
+                utopia_store::jobs::enqueue(
+                    &state.pool,
+                    "process_document",
+                    json!({ "document_id": doc.id }),
+                )
+                .await?;
+                created.push(doc);
+            }
+            Err(AppError::Conflict(_)) => {
+                skipped.push(json!({ "filename": filename, "reason": "duplicate content" }));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    if created.is_empty() && skipped.is_empty() {
+        return Err(AppError::invalid("no_files", "No files received").into());
+    }
+    Ok(Json(json!({ "created": created, "skipped": skipped })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct DocsQuery {
+    /// 来源作用域：缺省 = 全部；`none` = 没有来源的；否则一个来源 id
+    #[serde(default)]
+    pub source: Option<String>,
+    /// 文件名包含
+    #[serde(default)]
+    pub q: Option<String>,
+    /// 抽取状态：none | queued | extracting | done | failed
+    #[serde(default)]
+    pub graph: Option<String>,
+    /// `deleted` = 「已删除」视图：只列墓碑（#268）。缺省 = 活着的
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+/// 文库一页。
+///
+/// **改成服务端筛选与分页**：从前一次取回整库、前端切片。27 篇没事，两万篇会把
+/// 整张表打进浏览器；而客户端筛选还有个更隐蔽的毛病——它只筛得到已经拿下来的那些。
+pub async fn list(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(kb_id): Path<Uuid>,
+    Query(q): Query<DocsQuery>,
+) -> ApiResult<Json<utopia_core::models::DocumentPage>> {
+    utopia_store::access::require_kb(&state.pool, &user, kb_id, Role::Viewer).await?;
+    let page = utopia_store::documents::page(
+        &state.pool,
+        kb_id,
+        parse_scope(q.source.as_deref()),
+        q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        q.graph.as_deref().filter(|s| !s.is_empty()),
+        q.state.as_deref() == Some("deleted"),
+        q.limit.unwrap_or(15).clamp(1, 200),
+        q.offset.unwrap_or(0).max(0),
+    )
+    .await?;
+    Ok(Json(page))
+}
+
+/// `None` = 全部，`Some(None)` = 没有来源的，`Some(Some(id))` = 某个来源。
+///
+/// 认不出的字符串当成「全部」而不是报错：这个参数来自界面上的一次点击，
+/// 而一次点击不该把整页变成一条错误。
+fn parse_scope(raw: Option<&str>) -> Option<Option<Uuid>> {
+    match raw {
+        None | Some("") => None,
+        Some("none") => Some(None),
+        Some(s) => s.parse().ok().map(Some),
+    }
+}
+
+/// 一键重试这个作用域里全部抽取失败的文档。
+///
+/// **存在的理由是一条条点太慢**：一个来源里五篇失败就是点五次，而失败往往是
+/// 成批的（模型端点断了一阵，那段时间进来的全挂）。
+pub async fn retry_failed(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(kb_id): Path<Uuid>,
+    Query(q): Query<DocsQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    utopia_store::access::require_kb(&state.pool, &user, kb_id, Role::Editor).await?;
+    let ids =
+        utopia_store::documents::failed_ids(&state.pool, kb_id, parse_scope(q.source.as_deref()))
+            .await?;
+    // 逐个入队而不是一条 SQL 批量改状态：排队本身有别的动作（解雇在跑的任务、
+    // 清增量标记），那些在 `queue_extraction_one` 里，绕过它会留下半截状态
+    let mut queued = 0usize;
+    for id in &ids {
+        if utopia_store::documents::queue_extraction_one(&state.pool, *id)
+            .await
+            .is_ok()
+        {
+            queued += 1;
+        }
+    }
+    if queued > 0 {
+        state.emit_document(kb_id, ids[0]);
+    }
+    Ok(Json(json!({ "queued": queued, "found": ids.len() })))
+}
+
+/// 文档详情 + 全部分块（文档查看器用）。
+pub async fn detail(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let doc = utopia_store::documents::get(&state.pool, id).await?;
+    utopia_store::access::require_kb(&state.pool, &user, doc.kb_id, Role::Viewer).await?;
+    let chunks = utopia_store::documents::chunks_full(&state.pool, id).await?;
+    Ok(Json(json!({ "document": doc, "chunks": chunks })))
+}
+
+/// 反向证据链：文档各分块抽出的事实（文档查看器右栏）。
+pub async fn extractions(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let doc = utopia_store::documents::get(&state.pool, id).await?;
+    utopia_store::access::require_kb(&state.pool, &user, doc.kb_id, Role::Viewer).await?;
+    let facts = utopia_store::graph::document_extractions(&state.pool, id).await?;
+    Ok(Json(json!({ "facts": facts })))
+}
+
+pub async fn delete(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let doc = utopia_store::documents::get(&state.pool, id).await?;
+    utopia_store::access::require_kb(&state.pool, &user, doc.kb_id, Role::Editor).await?;
+
+    // 墓碑，不是减法（#268）：文档、分块、证据、原始文件都留着；只作废没有别的出处的事实
+    let report = utopia_store::documents::delete(&state.pool, doc.kb_id, id, Some(user.id)).await?;
+    let search = state.search.clone();
+    let did = id.to_string();
+    tokio::task::spawn_blocking(move || search.delete_document(&did))
+        .await
+        .map_err(|e| AppError::Other(e.into()))?
+        .map_err(AppError::Other)?;
+    // 前提作废了，靠它推出来的派生随之失效——不等下一次定时重推
+    settle_derivations(&state, doc.kb_id).await?;
+    let _ = utopia_store::audit::record(
+        &state.pool,
+        Some(doc.kb_id),
+        user.id,
+        "document.deleted",
+        "document",
+        Some(id),
+        json!({
+            "filename": doc.filename,
+            "deletion_id": report.deletion_id,
+            "invalidated_facts": report.invalidated_facts,
+        }),
+    )
+    .await;
+    state.emit_document(doc.kb_id, id);
+    Ok(Json(json!({
+        "ok": true,
+        "deletion_id": report.deletion_id,
+        "invalidated_facts": report.invalidated_facts,
+    })))
+}
+
+/// 撤销删除：文档、分块、这次作废的事实原路复活，索引重建。
+/// 同步撞见墓碑与同内容重传走的是同一个 store 函数，这里只是人按的那一条路
+pub async fn restore(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let doc = utopia_store::documents::get(&state.pool, id).await?;
+    utopia_store::access::require_kb(&state.pool, &user, doc.kb_id, Role::Editor).await?;
+    let doc = utopia_store::documents::restore(&state.pool, doc.kb_id, id).await?;
+    reindex(&state, &doc).await?;
+    settle_derivations(&state, doc.kb_id).await?;
+    let _ = utopia_store::audit::record(
+        &state.pool,
+        Some(doc.kb_id),
+        user.id,
+        "document.restored",
+        "document",
+        Some(id),
+        json!({ "filename": doc.filename }),
+    )
+    .await;
+    state.emit_document(doc.kb_id, id);
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// 真删（#268 下半）：内容抹掉，不可撤销，只对已删除的文档开放，库管理员才能按。
+/// 库里先记账（purged_at），再删文件：删文件失败只是漏一份孤儿原文，反过来则是
+/// 库说「还能恢复」而原文已经没了
+pub async fn purge(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let doc = utopia_store::documents::get(&state.pool, id).await?;
+    utopia_store::access::require_kb(&state.pool, &user, doc.kb_id, Role::Admin).await?;
+    let report = utopia_store::documents::purge(&state.pool, doc.kb_id, id).await?;
+    for sha in &report.blobs {
+        if let Err(e) = state.blob.delete(sha).await {
+            tracing::warn!(document = %id, sha, error = %e, "purge: blob left behind");
+        }
+    }
+    let _ = utopia_store::audit::record(
+        &state.pool,
+        Some(doc.kb_id),
+        user.id,
+        "document.purged",
+        "document",
+        Some(id),
+        json!({
+            "filename": doc.filename,
+            "chunks": report.chunks,
+            "blobs": report.blobs.len(),
+        }),
+    )
+    .await;
+    state.emit_document(doc.kb_id, id);
+    Ok(Json(
+        json!({ "ok": true, "chunks": report.chunks, "blobs": report.blobs.len() }),
+    ))
+}
+
+/// 复活的文档回到全文索引：分块的正文一直都在，只是重写一遍索引条目
+pub async fn reindex(state: &AppState, doc: &Document) -> utopia_core::AppResult<()> {
+    let chunks =
+        utopia_store::documents::chunks_in_document(&state.pool, doc.kb_id, doc.id).await?;
+    let pairs: Vec<(String, String)> = chunks
+        .into_iter()
+        .map(|c| (c.id.to_string(), c.text))
+        .collect();
+    let search = state.search.clone();
+    let (kb, did) = (doc.kb_id.to_string(), doc.id.to_string());
+    tokio::task::spawn_blocking(move || search.reindex_document(&kb, &did, &pairs))
+        .await
+        .map_err(|e| AppError::Other(e.into()))?
+        .map_err(AppError::Other)?;
+    Ok(())
+}
+
+/// 前提变了就重推一遍，让派生跟上——开关关着的库不推。删除、撤销、同步复活三条路共用
+pub(crate) async fn settle_derivations(
+    state: &AppState,
+    kb_id: Uuid,
+) -> utopia_core::AppResult<()> {
+    let kb = utopia_store::kbs::get(&state.pool, kb_id).await?;
+    if kb.materialize_inferences {
+        utopia_store::reasoning::materialize(&state.pool, kb_id).await?;
+    }
+    Ok(())
+}
+
+/// 重新处理（解析器升级/失败重试）。
+pub async fn reprocess(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let doc = utopia_store::documents::get(&state.pool, id).await?;
+    utopia_store::access::require_kb(&state.pool, &user, doc.kb_id, Role::Editor).await?;
+    utopia_store::documents::set_status(&state.pool, id, "pending").await?;
+    let job_id = utopia_store::jobs::enqueue(
+        &state.pool,
+        "process_document",
+        json!({ "document_id": id }),
+    )
+    .await?;
+    Ok(Json(json!({ "job_id": job_id })))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 只认开头独立的完整日期行，不把正文里提到的事件日期当作文档日期（#610）。
+///
+/// 顺序：**文件名 → 正文首行**。文件名是 multipart 解析时一定有的；
+/// 公告、备案一类的语料通常按日期命名，是正文里写「2024年2月29日 公告」还是
+/// 文件名叫「2024-02-29_gaoshu.txt」，对读的人来说是一个东西，但只有文件名
+/// 这条路在 multipart 落库之前就拍得到。日期格式与正文保持一致（ISO 或中文全形）。
+fn content_time(filename: &str, bytes: &[u8]) -> Option<chrono::DateTime<chrono::Utc>> {
+    if !is_text_extension(filename) {
+        return None;
+    }
+    let stem = std::path::Path::new(filename).file_stem()?.to_str()?;
+    if let Some(day) = parse_filename_date(stem) {
+        return Some(day.and_hms_opt(0, 0, 0)?.and_utc());
+    }
+    // 只解码头部 4 KiB：日期行只认开头。PDF、Word 这类格式要读日期时，在各自的解析器里
+    // 读它们自己的元数据，不在这里猜
+    const HEADER_BYTES: usize = 4096;
+    let text = utopia_ingest::decode_text(&bytes[..bytes.len().min(HEADER_BYTES)]);
+    let header = if bytes.len() > HEADER_BYTES {
+        // 截断的半行可能在日期后还有文字，不能把它误当独立日期行。
+        text.rsplit_once('\n')?.0
+    } else {
+        &text
+    };
+    let line = header
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    let date = line
+        .strip_prefix('（')
+        .and_then(|s| s.strip_suffix('）'))
+        .or_else(|| line.strip_prefix('(').and_then(|s| s.strip_suffix(')')))
+        .unwrap_or(line);
+    if !date.get(..4)?.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let day = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .or_else(|_| chrono::NaiveDate::parse_from_str(date, "%Y年%m月%d日"))
+        .ok()?;
+    // 与项目已有日精度约定一致：UTC 零点是存储约定，不猜作者所在时区。
+    Some(day.and_hms_opt(0, 0, 0)?.and_utc())
+}
+
+/// 文本类的扩展名：只对 `txt` / `md` / `markdown` 试日期解析。
+/// PDF / Word 等格式要读日期时，在各自的解析器里读它们自己的元数据（#610 决定 2）。
+fn is_text_extension(filename: &str) -> bool {
+    let Some(ext) = std::path::Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+    else {
+        return false;
+    };
+    ["txt", "md", "markdown"]
+        .iter()
+        .any(|known| ext.eq_ignore_ascii_case(known))
+}
+
+/// 解析主名前缀里的 ISO `YYYY-MM-DD` 或中文 `YYYY年M月D日`。
+///
+/// 不依赖 `regex` 库：手工走一遍就够，错误形态也清楚。
+///  严格匹配：`%Y` 是 4 位数字，`%m` / `%d` 是 1-2 位（与正文解析一致，`chrono`
+///  会拒掉像 `2023-02-29` 这种不可能的日期，但接受 `2024-2-9` 与 `2024-02-09`）。
+fn parse_filename_date(stem: &str) -> Option<chrono::NaiveDate> {
+    let bytes = stem.as_bytes();
+    // 头 4 位必须是数字；这一关漏过去 `chrono` 也会拒，但提前失败省一次分配
+    if bytes.len() < 4 || !bytes[..4].iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    // ISO：`YYYY-MM-DD` 或 `YYYY-M-D`，至少 8 个字符位
+    if bytes.len() >= 8 && bytes[4] == b'-' {
+        // 找到下一处分隔（位置 5+），可以是 `-` 或别的字符（停止位）
+        let after_year = 5;
+        let month_end = find_ascii_digit_end(bytes, after_year);
+        // 月份 1-2 位数字
+        let month_str = std::str::from_utf8(&bytes[after_year..month_end]).ok()?;
+        // 月份后必须是 `-`
+        if month_end >= bytes.len() || bytes[month_end] != b'-' {
+            return None;
+        }
+        let day_start = month_end + 1;
+        let day_end = find_ascii_digit_end(bytes, day_start);
+        let day_str = std::str::from_utf8(&bytes[day_start..day_end]).ok()?;
+        return chrono::NaiveDate::parse_from_str(
+            &format!("{}-{}-{}", &stem[..4], month_str, day_str),
+            "%Y-%m-%d",
+        )
+        .ok();
+    }
+    // 中文：`YYYY年M月D日`，年号后必须是 `年`
+    let year_str = std::str::from_utf8(&bytes[..4]).ok()?;
+    let after_year = 4;
+    let rest = stem.get(after_year..)?;
+    let zh_tail = rest.strip_prefix('年')?;
+    let (month_str, zh_tail) = read_ascii_digits(zh_tail)?;
+    let zh_tail = zh_tail.strip_prefix('月')?;
+    let (day_str, zh_tail) = read_ascii_digits(zh_tail)?;
+    if !zh_tail.starts_with('日') {
+        return None;
+    }
+    chrono::NaiveDate::parse_from_str(
+        &format!("{year_str}年{month_str}月{day_str}日"),
+        "%Y年%m月%d日",
+    )
+    .ok()
+}
+
+/// 从 `start` 起往后读 1-2 位 ASCII 数字，返回 (数字字符串, 剩余的字符串)。
+fn read_ascii_digits(s: &str) -> Option<(&str, &str)> {
+    let end = s
+        .as_bytes()
+        .iter()
+        .take(2)
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    if end == 0 {
+        return None;
+    }
+    Some((&s[..end], &s[end..]))
+}
+
+/// 从 `start` 起往后走 ASCII 数字，返回第一个非数字字符的位置（闭区间右开）。
+/// 全部到尾部也允许：返回 `bytes.len()`。
+fn find_ascii_digit_end(bytes: &[u8], start: usize) -> usize {
+    let mut i = start;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    i
+}
+
+#[cfg(test)]
+#[path = "documents_routes_tests.rs"]
+mod tests;
+
+/// 抽取丢弃信号：哪些事实抽出来了却没能落地。整库一次取回——按
+/// (文档 × 原因 × 具体对象) 聚合后行数很小，Library 既算总数又展开详情，
+/// 不必逐行发请求。
+pub async fn extraction_drops(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(kb_id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    utopia_store::access::require_kb(&state.pool, &user, kb_id, Role::Viewer).await?;
+    let drops = utopia_store::extraction_drops::for_kb(&state.pool, kb_id).await?;
+    Ok(Json(json!({ "drops": drops })))
+}

@@ -2,11 +2,9 @@ import { writeFileSync } from 'node:fs'
 
 import type { ScrollBoxHandle } from '@hermes/ink'
 import { evictInkCaches } from '@hermes/ink'
-import type { InflightTurn, SessionResumeResult, Usage } from '@hermes/shared/gateway-events'
-import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react'
+import { type RefObject, useCallback, useEffect, useRef } from 'react'
 
-import { STARTUP_WORKSPACE_CWD } from '../config/env.js'
-import { buildSetupRequiredSections, setupRequiredTitle } from '../content/setup.js'
+import { buildSetupRequiredSections, SETUP_REQUIRED_TITLE } from '../content/setup.js'
 import { introMsg, toTranscriptMessages } from '../domain/messages.js'
 import { ZERO } from '../domain/usage.js'
 import { type GatewayClient } from '../gatewayClient.js'
@@ -14,33 +12,29 @@ import type {
   SessionActivateResponse,
   SessionCloseResponse,
   SessionCreateResponse,
+  SessionInflightTurn,
+  SessionResumeResponse,
   SessionTitleResponse,
   SetupStatusResponse
 } from '../gatewayTypes.js'
-import { t } from '../i18n/runtime.js'
 import { asRpcResult } from '../lib/rpc.js'
-import type { Msg, PanelSection, SessionInfo } from '../types.js'
+import type { Msg, PanelSection, SessionInfo, Usage } from '../types.js'
 
-import { applyConnectionRequest, clearConnectionOperation } from './connectionOperationStore.js'
 import type { ComposerActions, GatewayRpc, StateSetter } from './interfaces.js'
 import { patchOverlayState } from './overlayStore.js'
-import { scheduleResumeScrollToBottom } from './sessionResumeView.js'
 import { turnController } from './turnController.js'
 import { patchTurnState } from './turnStore.js'
 import { getUiState, patchUiState } from './uiStore.js'
-import { describeCredentialWarning } from './userMessages.js'
-
-export { refreshSessionView, scheduleResumeScrollToBottom } from './sessionResumeView.js'
 
 const usageFrom = (info: null | SessionInfo): Usage => (info?.usage ? { ...ZERO, ...info.usage } : ZERO)
 
 const statusFromLiveSession = (status?: string, running = false) => {
   if (status === 'waiting') {
-    return t('session.status.waitingForInput')
+    return 'waiting for input…'
   }
 
   if (status === 'starting') {
-    return t('session.status.startingAgent')
+    return 'starting agent…'
   }
 
   return running || status === 'working' ? 'running…' : 'ready'
@@ -58,22 +52,13 @@ export const writeActiveSessionFile = (sessionId: null | string, file = process.
   }
 }
 
-export const liveSessionInflightMessages = (inflight?: null | InflightTurn): Msg[] => {
+export const liveSessionInflightMessages = (inflight?: null | SessionInflightTurn): Msg[] => {
   const user = String(inflight?.user ?? '').trim()
 
-  return user
-    ? toTranscriptMessages([
-        {
-          role: 'user',
-          text: user,
-          ...(inflight?.display_kind ? { display_kind: inflight.display_kind } : {}),
-          ...(inflight?.display_metadata ? { display_metadata: inflight.display_metadata } : {})
-        }
-      ])
-    : []
+  return user ? [{ role: 'user', text: user }] : []
 }
 
-export const hydrateLiveSessionInflight = (inflight?: null | InflightTurn) => {
+export const hydrateLiveSessionInflight = (inflight?: null | SessionInflightTurn) => {
   const assistant = String(inflight?.assistant ?? '')
 
   if (!assistant && !inflight?.streaming) {
@@ -95,6 +80,35 @@ export const signalFreshSessionBoundary = (
   onFreshSessionStarted(nextSid)
 
   return true
+}
+
+export const scheduleResumeScrollToBottom = (
+  scrollRef: RefObject<null | ScrollBoxHandle>,
+  delays: readonly number[] = [0, 80, 240]
+) => {
+  const startedAt = Date.now()
+
+  const timers = delays.map((delay, index) =>
+    setTimeout(() => {
+      const scroll = scrollRef.current
+
+      if (!scroll) {
+        return
+      }
+
+      const manuallyScrolledAfterResume = scroll.getLastManualScrollAt() > startedAt
+
+      if (!manuallyScrolledAfterResume && (index === 0 || scroll.isSticky())) {
+        scroll.scrollToBottom()
+      }
+    }, delay)
+  )
+
+  return () => {
+    for (const timer of timers) {
+      clearTimeout(timer)
+    }
+  }
 }
 
 const trimTail = (items: Msg[]) => {
@@ -160,7 +174,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
     turnController.fullReset()
     setVoiceRecording(false)
     setVoiceProcessing(false)
-    patchUiState({ bgTasks: new Set(), info: null, sid: null, storedSid: null, usage: ZERO })
+    patchUiState({ bgTasks: new Set(), info: null, sid: null, usage: ZERO })
     setHistoryItems([])
     setLastUserMsg('')
     setStickyPrompt('')
@@ -200,8 +214,8 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
       const setup = await rpc<SetupStatusResponse>('setup.status', {})
 
       if (setup?.provider_configured === false) {
-        panel(setupRequiredTitle(), buildSetupRequiredSections())
-        patchUiState({ status: t('session.status.setupRequired') })
+        panel(SETUP_REQUIRED_TITLE, buildSetupRequiredSections())
+        patchUiState({ status: 'setup required' })
 
         return null
       }
@@ -212,10 +226,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
         await closeSession(previousSid)
       }
 
-      const r = await rpc<SessionCreateResponse>('session.create', {
-        cols: colsRef.current,
-        ...(STARTUP_WORKSPACE_CWD ? { cwd: STARTUP_WORKSPACE_CWD } : {})
-      })
+      const r = await rpc<SessionCreateResponse>('session.create', { cols: colsRef.current })
 
       if (!r) {
         patchUiState({ status: 'ready' })
@@ -223,21 +234,17 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
         return null
       }
 
-      // The durable id lives on the create result; the lazy-create `info` does
-      // not carry it, and session.resume / the exit epilogue need the stored id.
-      const storedSid = r.stored_session_id || r.session_id
-      const info = r.info ? { ...r.info, stored_session_id: storedSid } : null
+      const info = r.info ?? null
       const requestedTitle = title?.trim() ?? ''
 
       resetSession()
       setSessionStartedAt(Date.now())
 
-      writeActiveSessionFile(storedSid)
+      writeActiveSessionFile(r.session_id)
       patchUiState({
         info,
         sid: r.session_id,
-        status: info?.version ? 'ready' : t('session.status.startingAgent'),
-        storedSid,
+        status: info?.version ? 'ready' : 'starting agent…',
         usage: usageFrom(info)
       })
 
@@ -246,7 +253,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
       }
 
       if (info?.credential_warning) {
-        sys(`warning: ${describeCredentialWarning(info.credential_warning)}`)
+        sys(`warning: ${info.credential_warning}`)
       }
 
       if (info?.config_warning) {
@@ -268,9 +275,8 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
             }
 
             const nextTitle = (result.title ?? requestedTitle).trim()
-            const suffix = result.pending ? t('session.lifecycle.titleQueuedSuffix') : ''
-            patchUiState({ sessionTitle: nextTitle })
-            sys(`${t('session.lifecycle.sessionTitleSet', nextTitle)}${suffix}`)
+            const suffix = result.pending ? ' (queued while session initializes)' : ''
+            sys(`session title set: ${nextTitle}${suffix}`)
           })
           .catch((err: unknown) => {
             if (getUiState().sid !== r.session_id) {
@@ -278,7 +284,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
             }
 
             const message = err instanceof Error ? err.message : String(err)
-            sys(`warning: ${t('session.lifecycle.failedToSetTitle', message)}`)
+            sys(`warning: failed to set session title: ${message}`)
           })
       }
 
@@ -295,7 +301,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
   )
 
   const newLiveSession = useCallback(
-    (msg = t('session.lifecycle.newLiveSessionStarted'), title?: string) => {
+    (msg = 'new live session started', title?: string) => {
       patchOverlayState({ sessions: false })
 
       return startNewSession(msg, title, true)
@@ -306,45 +312,34 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
   const activateLiveSession = useCallback(
     (id: string) => {
       patchOverlayState({ sessions: false })
-      patchUiState({ status: t('session.status.switchingSession') })
-      // The card belongs to the session being left; the activated one answers with its own.
-      clearConnectionOperation()
+      patchUiState({ status: 'switching session…' })
 
       gw.request<SessionActivateResponse>('session.activate', { session_id: id })
         .then(raw => {
           const r = asRpcResult<SessionActivateResponse>(raw)
 
           if (!r) {
-            sys(`error: ${t('session.common.invalidResponse', 'session.activate')}`)
+            sys('error: invalid response: session.activate')
 
             return patchUiState({ status: 'ready' })
           }
 
           const info = r.info ?? null
-          // Agent-less (lazy) activations answer with `_fallback_session_info`, which
-          // has no stored_session_id; the durable id is the response's session_key.
-          const storedSid = r.session_key || r.session_id
           const running = Boolean(r.running || r.status === 'working' || r.status === 'waiting')
 
           resetSession()
           setSessionStartedAt(r.started_at ? r.started_at * 1000 : Date.now())
           const transcript = [...toTranscriptMessages(r.messages), ...liveSessionInflightMessages(r.inflight)]
           setHistoryItems(info ? [introMsg(info), ...transcript] : transcript)
-          writeActiveSessionFile(storedSid)
+          writeActiveSessionFile(r.session_key ?? r.session_id)
           patchUiState({
             busy: running,
             info,
             sid: r.session_id,
             status: statusFromLiveSession(r.status, running),
-            storedSid,
             usage: usageFrom(info)
           })
           hydrateLiveSessionInflight(r.inflight)
-
-          if (r.pending_connection) {
-            applyConnectionRequest(r.pending_connection)
-          }
-
           cancelResumeScrollRef.current?.()
           cancelResumeScrollRef.current = scheduleResumeScrollToBottom(scrollRef)
         })
@@ -359,32 +354,29 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
   const resumeById = useCallback(
     (id: string) => {
       patchOverlayState({ sessions: false })
-      patchUiState({ status: t('session.status.resuming') })
+      patchUiState({ status: 'resuming…' })
 
-      return rpc<SetupStatusResponse>('setup.status', {}).then(setup => {
+      rpc<SetupStatusResponse>('setup.status', {}).then(setup => {
         if (setup?.provider_configured === false) {
-          panel(setupRequiredTitle(), buildSetupRequiredSections())
-          patchUiState({ status: t('session.status.setupRequired') })
+          panel(SETUP_REQUIRED_TITLE, buildSetupRequiredSections())
+          patchUiState({ status: 'setup required' })
 
           return
         }
 
         const previousSid = getUiState().sid
 
-        return gw
-          .request<SessionResumeResult>('session.resume', { cols: colsRef.current, session_id: id })
+        gw.request<SessionResumeResponse>('session.resume', { cols: colsRef.current, session_id: id })
           .then(raw => {
-            const r = asRpcResult<SessionResumeResult>(raw)
+            const r = asRpcResult<SessionResumeResponse>(raw)
 
             if (!r) {
-              sys(`error: ${t('session.common.invalidResponse', 'session.resume')}`)
+              sys('error: invalid response: session.resume')
 
               return patchUiState({ status: 'ready' })
             }
 
-            const storedSid = r.info?.stored_session_id || r.stored_session_id || r.resumed || id
-            const info = r.info ? { ...r.info, stored_session_id: storedSid } : null
-
+            const info = r.info ?? null
             const running = Boolean(r.running || r.status === 'working' || r.status === 'waiting')
 
             resetSession()
@@ -393,23 +385,15 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
             const resumed = [...toTranscriptMessages(r.messages), ...liveSessionInflightMessages(r.inflight)]
 
             setHistoryItems(info ? [introMsg(info), ...resumed] : resumed)
-            writeActiveSessionFile(storedSid)
+            writeActiveSessionFile(r.resumed ?? r.session_id)
             patchUiState({
               busy: running,
               info,
               sid: r.session_id,
-              status: statusFromLiveSession(r.status ?? undefined, running),
-              storedSid,
+              status: statusFromLiveSession(r.status, running),
               usage: usageFrom(info)
             })
             hydrateLiveSessionInflight(r.inflight)
-
-            if (r.pending_connection) {
-              applyConnectionRequest(r.pending_connection)
-            } else {
-              clearConnectionOperation()
-            }
-
             cancelResumeScrollRef.current?.()
             cancelResumeScrollRef.current = scheduleResumeScrollToBottom(scrollRef)
 
@@ -427,40 +411,27 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
   )
 
   const guardBusySessionSwitch = useCallback(
-    (what = t('session.lifecycle.switchSessions')) => {
+    (what = 'switch sessions') => {
       if (!getUiState().busy) {
         return false
       }
 
-      sys(t('session.lifecycle.interruptBeforeSwitch', what))
+      sys(`interrupt the current turn before trying to ${what}`)
 
       return true
     },
     [sys]
   )
 
-  return useMemo(
-    () => ({
-      activateLiveSession,
-      closeSession,
-      guardBusySessionSwitch,
-      newLiveSession,
-      newSession,
-      resetSession,
-      resetVisibleHistory,
-      resumeById,
-      trimLastExchange: trimTail
-    }),
-    [
-      activateLiveSession,
-      closeSession,
-      guardBusySessionSwitch,
-      newLiveSession,
-      newSession,
-      resetSession,
-      resetVisibleHistory,
-      resumeById,
-      trimTail
-    ]
-  )
+  return {
+    activateLiveSession,
+    closeSession,
+    guardBusySessionSwitch,
+    newLiveSession,
+    newSession,
+    resetSession,
+    resetVisibleHistory,
+    resumeById,
+    trimLastExchange: trimTail
+  }
 }

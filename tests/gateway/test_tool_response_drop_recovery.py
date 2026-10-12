@@ -27,9 +27,9 @@ import pytest
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
     BasePlatformAdapter,
+    MessageEvent,
     SendResult,
 )
-from gateway.platforms.event import MessageEvent
 from gateway.session import SessionSource, build_session_key
 
 
@@ -151,9 +151,7 @@ class TestRecoveryDoesNotLeakMediaFragments:
         # but force the path to be filtered out (unsafe/nonexistent) so we hit
         # the empty-text + no-attachment recovery branch deterministically.
         monkeypatch.setattr(
-            type(adapter),
-            "filter_media_delivery_paths",
-            staticmethod(lambda m, session_key="": []),
+            type(adapter), "filter_media_delivery_paths", staticmethod(lambda m: [])
         )
 
         event = _make_event(Platform.DISCORD)
@@ -236,7 +234,8 @@ class TestPostStopInterruptSwallow:
 
         response = _normalize_empty_agent_response(agent_result, "", history_len=10)
 
-        assert response.strip(), "A turn killed before doing any work must not be silent"
+        assert response != "", "A turn killed before doing any work must not be silent"
+        assert "send it again" in response.lower()
 
 
     def test_uninterrupted_zero_api_calls_surfaces_retry_hint(self):
@@ -254,7 +253,7 @@ class TestPostStopInterruptSwallow:
 
         response = _normalize_empty_agent_response(agent_result, "", history_len=10)
 
-        assert response.strip(), "a zero-work turn must not be silent"
+        assert "send it again" in response
 
     @pytest.mark.asyncio
     async def test_interrupt_and_clear_session_evicts_cached_agent(

@@ -1,17 +1,4 @@
 // Click on a session by partial title match.
-//
-// Two flake sources fixed (#97982): a bare scrollIntoView() whose smooth
-// scroll could be dropped under load, and a fixed 3000ms post-click sleep
-// that raced fast loads and wasted slow ones. The click now scrolls instantly
-// ({ behavior: 'auto', block: 'center' }) and the post-click wait polls for
-// the session's composer to mount — see click-session-helpers.mjs.
-import {
-  buildFindClickExpression,
-  evaluateJsonValue,
-  pollUntil,
-  POST_CLICK_READY_EXPRESSION
-} from './click-session-helpers.mjs'
-
 const list = await (await fetch('http://127.0.0.1:9222/json/list')).json()
 const tgt = list.find(t => t.type === 'page' && t.url.startsWith('http'))
 const ws = new WebSocket(tgt.webSocketDebuggerUrl)
@@ -34,16 +21,21 @@ const send = (method, params = {}) =>
 
 const title = process.argv[2] || 'Phaser particle'
 const r = await send('Runtime.evaluate', {
-  expression: buildFindClickExpression(title),
+  expression: `
+    (() => {
+      const titleMatch = ${JSON.stringify(title)}
+      const all = document.querySelectorAll('button, a, div[role="button"]')
+      const found = [...all].find(el => (el.textContent || '').includes(titleMatch))
+      if (!found) return JSON.stringify({ found: false, tried: titleMatch })
+      found.scrollIntoView()
+      found.click()
+      return JSON.stringify({ found: true, tag: found.tagName, text: (found.textContent || '').slice(0, 80) })
+    })()
+  `,
   returnByValue: true
 })
 console.log('click raw:', JSON.stringify(r, null, 2))
-
-// Wait for the clicked session's composer to mount — bounded polling, not a
-// fixed sleep. `false` here means the session view never came up within the
-// bound; the state read below then shows what the page actually looks like.
-const ready = await pollUntil(send, POST_CLICK_READY_EXPRESSION)
-console.log('post-click ready:', ready)
+await new Promise(r => setTimeout(r, 3000))
 
 const status = await send('Runtime.evaluate', {
   expression: `JSON.stringify({
@@ -55,7 +47,5 @@ const status = await send('Runtime.evaluate', {
   })`,
   returnByValue: true
 })
-// Nested CDP envelope: message.result.result.value — evaluateJsonValue unwraps
-// and parses it (the old `status.result.value` read logged undefined).
-console.log('after click:', evaluateJsonValue(status))
+console.log('after click:', status.result.value)
 ws.close()

@@ -1,5 +1,4 @@
 import { Box, Text, useInput, useStdout } from '@hermes/ink'
-import type { SessionListResult, SessionListRow } from '@hermes/shared/gateway-events'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { sessionScopedModelArg } from '../domain/slash.js'
@@ -8,10 +7,10 @@ import type {
   SessionActiveItem,
   SessionActiveListResponse,
   SessionCloseResponse,
-  SessionDeleteResponse
+  SessionDeleteResponse,
+  SessionListItem,
+  SessionListResponse
 } from '../gatewayTypes.js'
-import { messages } from '../i18n/runtime.js'
-import { useT } from '../i18n/useT.js'
 import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
 import type { Theme } from '../theme.js'
 
@@ -32,26 +31,24 @@ const STATUS_GLYPH: Record<string, string> = {
   working: '▶'
 }
 
-/** Human label for a live-session status value; unknown statuses render as-is.
- *  Resolved at call time so it follows the active language. */
-export const sessionStatusLabel = (status: string): string => {
-  const labels: Record<string, string | undefined> = messages().pickers.session.status
-
-  return labels[status] ?? status
+const STATUS_LABEL: Record<string, string> = {
+  idle: 'idle',
+  starting: 'starting',
+  waiting: 'waiting',
+  working: 'working'
 }
 
 const CTRL_OFFSET = 96
 
-const shortModel = (model = '') => model.replace(/^.*\//, '') || messages().pickers.session.modelUnknown
+const shortModel = (model = '') => model.replace(/^.*\//, '') || 'model?'
 const ctrlChar = (letter: string) => String.fromCharCode(letter.charCodeAt(0) - CTRL_OFFSET)
 
 export const fixedSessionColumnStyle = () => ({ flexShrink: 0 })
 
-export const activeSessionCountLabel = (count: number) =>
-  count === 1 ? messages().pickers.session.liveSessionsOne(1) : messages().pickers.session.liveSessionsOther(count)
+export const activeSessionCountLabel = (count: number) => `${count} live ${count === 1 ? 'session' : 'sessions'}`
 
 export const sessionsCountLabel = (liveCount: number, resumableCount: number) =>
-  messages().pickers.session.counts(liveCount, resumableCount)
+  `${liveCount} live · ${resumableCount} resumable`
 
 export type SessionRowKind = 'history' | 'live' | 'new'
 
@@ -75,40 +72,32 @@ export const relativeSessionAge = (ts?: number) => {
 
   const days = (Date.now() / 1000 - ts) / 86400
 
-  const age = messages().pickers.session.age
-
   if (days < 1) {
-    return age.today
+    return 'today'
   }
 
   if (days < 2) {
-    return age.yesterday
+    return 'yesterday'
   }
 
-  return age.daysAgo(Math.floor(days))
+  return `${Math.floor(days)}d ago`
 }
 
 /** Drop already-live sessions from the resumable history list (dedupe by id). */
-export const resumableHistory = (history: readonly SessionListRow[], live: readonly SessionActiveItem[]) => {
+export const resumableHistory = (history: readonly SessionListItem[], live: readonly SessionActiveItem[]) => {
   const liveIds = new Set(live.map(s => s.id))
 
   return history.filter(h => !liveIds.has(h.id))
 }
 
-// Hint segment tables are functions (not module constants) so their text
-// fragments resolve against the active language at render time.
-export const resumeRowContextHintSegments = (): OrchestratorHintSegment[] => {
-  const h = messages().pickers.session.hint
-
-  return [
-    { role: 'label', text: h.resumableLabel },
-    { role: 'text', text: ' ' },
-    { role: 'hotkey', text: 'Enter' },
-    { role: 'text', text: h.resume },
-    { role: 'hotkey', text: 'd' },
-    { role: 'text', text: h.delete }
-  ]
-}
+export const resumeRowContextHintSegments: OrchestratorHintSegment[] = [
+  { role: 'label', text: 'Resumable:' },
+  { role: 'text', text: ' ' },
+  { role: 'hotkey', text: 'Enter' },
+  { role: 'text', text: ' resume · ' },
+  { role: 'hotkey', text: 'd' },
+  { role: 'text', text: ' delete' }
+]
 
 export type OrchestratorHintRole = 'hotkey' | 'label' | 'text'
 
@@ -117,48 +106,41 @@ export interface OrchestratorHintSegment {
   text: string
 }
 
-export const orchestratorContextHintSegments = (newSelected: boolean): OrchestratorHintSegment[] => {
-  const h = messages().pickers.session.hint
-
-  return newSelected
+export const orchestratorContextHintSegments = (newSelected: boolean): OrchestratorHintSegment[] =>
+  newSelected
     ? [
-        { role: 'label', text: h.newRowLabel },
-        { role: 'text', text: h.typePrompt },
+        { role: 'label', text: 'New row:' },
+        { role: 'text', text: ' type prompt · ' },
         { role: 'hotkey', text: 'Enter' },
-        { role: 'text', text: h.start },
+        { role: 'text', text: ' start · ' },
         { role: 'hotkey', text: 'Tab' },
-        { role: 'text', text: h.model }
+        { role: 'text', text: ' model' }
       ]
     : [
-        { role: 'label', text: h.sessionRowLabel },
+        { role: 'label', text: 'Session row:' },
         { role: 'text', text: ' ' },
         { role: 'hotkey', text: 'Enter' },
-        { role: 'text', text: h.switch },
+        { role: 'text', text: ' switch · ' },
         { role: 'hotkey', text: 'Ctrl+D' },
-        { role: 'text', text: h.close }
+        { role: 'text', text: ' close' }
       ]
-}
 
-export const orchestratorGlobalHotkeyHintSegments = (): OrchestratorHintSegment[] => {
-  const h = messages().pickers.session.hint
-
-  return [
-    { role: 'hotkey', text: '↑↓' },
-    { role: 'text', text: h.move },
-    { role: 'hotkey', text: 'Ctrl+N' },
-    { role: 'text', text: h.new },
-    { role: 'hotkey', text: 'Ctrl+R' },
-    { role: 'text', text: h.refresh },
-    { role: 'hotkey', text: 'Esc' },
-    { role: 'text', text: h.close }
-  ]
-}
+export const orchestratorGlobalHotkeyHintSegments: OrchestratorHintSegment[] = [
+  { role: 'hotkey', text: '↑↓' },
+  { role: 'text', text: ' move · ' },
+  { role: 'hotkey', text: 'Ctrl+N' },
+  { role: 'text', text: ' new · ' },
+  { role: 'hotkey', text: 'Ctrl+R' },
+  { role: 'text', text: ' refresh · ' },
+  { role: 'hotkey', text: 'Esc' },
+  { role: 'text', text: ' close' }
+]
 
 const hintText = (segments: readonly OrchestratorHintSegment[]) => segments.map(segment => segment.text).join('')
 
 export const orchestratorContextHint = (newSelected: boolean) => hintText(orchestratorContextHintSegments(newSelected))
 
-export const orchestratorGlobalHotkeyHint = () => hintText(orchestratorGlobalHotkeyHintSegments())
+export const orchestratorGlobalHotkeyHint = hintText(orchestratorGlobalHotkeyHintSegments)
 
 export const orchestratorHintSegmentColor = (t: Theme, role: OrchestratorHintRole) => {
   if (role === 'hotkey') {
@@ -237,7 +219,7 @@ export const draftModelNameFromArg = (value: string) => {
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i]!
 
-    if (part === '--provider' || part === '--reasoning') {
+    if (part === '--provider') {
       i++
 
       continue
@@ -256,7 +238,7 @@ export const draftModelNameFromArg = (value: string) => {
 export const draftModelDisplayLabel = (value: string) => {
   const modelName = draftModelNameFromArg(value)
 
-  return modelName ? shortModel(modelName) : messages().pickers.session.currentOrDefault
+  return modelName ? shortModel(modelName) : 'current/default'
 }
 
 export type OrchestratorRowClickAction = { action: 'activate'; sessionId: string } | { action: 'select-new' }
@@ -315,7 +297,7 @@ export function ActiveSessionSwitcher({
   t
 }: ActiveSessionSwitcherProps) {
   const [items, setItems] = useState<SessionActiveItem[]>([])
-  const [history, setHistory] = useState<SessionListRow[]>([])
+  const [history, setHistory] = useState<SessionListItem[]>([])
   const [err, setErr] = useState('')
   const [sel, setSel] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -329,20 +311,17 @@ export function ActiveSessionSwitcher({
   // different session. Any other key cancels the prompt.
   const [confirmDelete, setConfirmDelete] = useState<null | string>(null)
   const [deleting, setDeleting] = useState(false)
-  const T = useT()
-  const S = T.pickers.session
-  const C = T.pickers.common
   const initialSelectionAppliedRef = useRef(false)
   // Holds the RAW `session.list` results (pre-dedupe). The quiet 1.5s poll
   // re-derives the resumable list from this against the latest live set, so a
   // session that was hidden while live reappears in history once it closes —
   // without re-querying the DB. Only refreshed on a full (includeHistory) load.
-  const rawHistoryRef = useRef<SessionListRow[]>([])
+  const rawHistoryRef = useRef<SessionListItem[]>([])
   // Mirror the displayed lists so the async poll can re-anchor the selection to
   // the *same* row (by session id) after live sessions appear/disappear, rather
   // than keeping a now-stale flat index.
   const itemsRef = useRef<SessionActiveItem[]>([])
-  const historyDisplayRef = useRef<SessionListRow[]>([])
+  const historyDisplayRef = useRef<SessionListItem[]>([])
   const { stdout } = useStdout()
   // Optional maxWidth lets grid layouts hand the switcher its cell budget.
   const preferredWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, (stdout?.columns ?? 80) - 6))
@@ -375,13 +354,13 @@ export function ActiveSessionSwitcher({
           gw.request<SessionActiveListResponse>('session.active_list', {
             current_session_id: currentSessionId
           }),
-          includeHistory ? gw.request<SessionListResult>('session.list', { limit: 200 }) : Promise.resolve(null)
+          includeHistory ? gw.request<SessionListResponse>('session.list', { limit: 200 }) : Promise.resolve(null)
         ])
 
         const r = liveRes.status === 'fulfilled' ? asRpcResult<SessionActiveListResponse>(liveRes.value) : null
 
         if (!r) {
-          setErr(messages().pickers.common.invalidResponse('session.active_list'))
+          setErr('invalid response: session.active_list')
           setLoading(false)
 
           return []
@@ -396,15 +375,15 @@ export function ActiveSessionSwitcher({
 
         if (includeHistory) {
           if (histRes.status === 'fulfilled') {
-            const parsedHist = asRpcResult<SessionListResult>(histRes.value)
+            const parsedHist = asRpcResult<SessionListResponse>(histRes.value)
 
             if (parsedHist) {
               rawHistoryRef.current = parsedHist.sessions ?? []
             } else {
-              histError = messages().pickers.common.invalidResponse('session.list')
+              histError = 'invalid response: session.list'
             }
           } else {
-            histError = messages().pickers.session.errors.couldNotLoadResumable
+            histError = 'could not load resumable sessions'
           }
         }
 
@@ -499,7 +478,7 @@ export function ActiveSessionSwitcher({
       const closed = Boolean(result?.closed ?? result?.ok)
 
       if (!closed) {
-        setErr(messages().pickers.session.errors.alreadyClosed)
+        setErr('session was already closed')
 
         return
       }
@@ -535,7 +514,7 @@ export function ActiveSessionSwitcher({
           const r = asRpcResult<SessionDeleteResponse>(raw)
 
           if (!r || r.deleted !== target.id) {
-            setErr(messages().pickers.common.invalidResponse('session.delete'))
+            setErr('invalid response: session.delete')
             setDeleting(false)
 
             return
@@ -692,7 +671,7 @@ export function ActiveSessionSwitcher({
   }
 
   if (loading) {
-    return <Text color={t.color.muted}>{S.loading}</Text>
+    return <Text color={t.color.muted}>loading sessions…</Text>
   }
 
   // The "+ new" row (sel 0) is pinned at the top so it's always visible; the
@@ -706,16 +685,16 @@ export function ActiveSessionSwitcher({
   const newRowStyle = newSelectedRow ? selectedSessionRowStyle(t) : null
   const newRowTextColor = newRowStyle?.color
   const newRowMarkerColor = newSessionMarkerColor(t, newSelectedRow)
-  const promptTitle = draftTitleFromPrompt(draft) || S.row.startNew
+  const promptTitle = draftTitleFromPrompt(draft) || 'Start a new live session'
 
   return (
     <Box flexDirection="column" width={width}>
       <Text bold color={t.color.accent}>
-        {S.title}
+        Sessions
       </Text>
       <Text color={t.color.muted}>{sessionsCountLabel(items.length, history.length)}</Text>
 
-      {err && <Text color={t.color.label}>{C.error(err)}</Text>}
+      {err && <Text color={t.color.label}>error: {err}</Text>}
 
       <Box backgroundColor={newRowStyle?.backgroundColor} flexDirection="row" onClick={handleRowClick(0)} width="100%">
         <Text bold={newSelectedRow} color={newRowTextColor ?? t.color.muted}>
@@ -730,13 +709,13 @@ export function ActiveSessionSwitcher({
 
         <Box {...fixedSessionColumnStyle()} width={11}>
           <Text bold={newSelectedRow} color={newRowMarkerColor} wrap="truncate-end">
-            {S.row.new}
+            new
           </Text>
         </Box>
 
         <Box {...fixedSessionColumnStyle()} width={11}>
           <Text color={newRowTextColor ?? t.color.muted} wrap="truncate-end">
-            {S.row.draft}
+            ✎ draft
           </Text>
         </Box>
 
@@ -753,8 +732,8 @@ export function ActiveSessionSwitcher({
         </Box>
       </Box>
 
-      {offset > 0 && <Text color={t.color.muted}>{C.moreAbove(offset)}</Text>}
-      {!listLen && <Text color={t.color.muted}>{S.noOtherSessions}</Text>}
+      {offset > 0 && <Text color={t.color.muted}> ↑ {offset} more</Text>}
+      {!listLen && <Text color={t.color.muted}>no other sessions — Enter on +new to start one</Text>}
 
       {visibleRows.map(i => {
         const selected = sel === i
@@ -767,10 +746,10 @@ export function ActiveSessionSwitcher({
           const pendingDelete = confirmDelete === h.id
 
           const title = pendingDelete
-            ? S.row.pressDAgain
+            ? 'press d again to delete'
             : deleting && selected
-              ? S.row.deleting
-              : h.title || h.preview || S.row.untitled
+              ? 'deleting…'
+              : h.title || h.preview || '(untitled)'
 
           return (
             <Box
@@ -804,7 +783,7 @@ export function ActiveSessionSwitcher({
 
               <Box {...fixedSessionColumnStyle()} width={18}>
                 <Text color={rowTextColor ?? t.color.muted} wrap="truncate-end">
-                  {S.row.messageCount(h.message_count ?? 0)}
+                  {h.message_count} msgs
                 </Text>
               </Box>
 
@@ -824,7 +803,7 @@ export function ActiveSessionSwitcher({
         const s = items[i - 1]!
         const status = s.status ?? 'idle'
         const current = s.current || s.id === currentSessionId
-        const title = closingId === s.id ? S.row.closing : s.title || s.preview || S.row.untitled
+        const title = closingId === s.id ? 'closing…' : s.title || s.preview || '(untitled)'
 
         return (
           <Box
@@ -850,7 +829,7 @@ export function ActiveSessionSwitcher({
                 color={rowTextColor ?? (current ? t.color.label : t.color.muted)}
                 wrap="truncate-end"
               >
-                {current ? S.row.current : s.id}
+                {current ? 'current' : s.id}
               </Text>
             </Box>
 
@@ -862,7 +841,7 @@ export function ActiveSessionSwitcher({
                 }
                 wrap="truncate-end"
               >
-                {STATUS_GLYPH[status] ?? '·'} {sessionStatusLabel(status)}
+                {STATUS_GLYPH[status] ?? '·'} {STATUS_LABEL[status] ?? status}
               </Text>
             </Box>
 
@@ -881,12 +860,12 @@ export function ActiveSessionSwitcher({
         )
       })}
 
-      {offset + VISIBLE < listLen && <Text color={t.color.muted}>{C.moreBelow(listLen - offset - VISIBLE)}</Text>}
+      {offset + VISIBLE < listLen && <Text color={t.color.muted}> ↓ {listLen - offset - VISIBLE} more</Text>}
 
       {newSelected ? (
         <>
           <Box marginTop={1}>
-            <Text color={t.color.label}>{S.promptLabel}</Text>
+            <Text color={t.color.label}>prompt › </Text>
             <TextInput
               color={t.color.text}
               columns={promptColumns}
@@ -897,26 +876,24 @@ export function ActiveSessionSwitcher({
           </Box>
           <OrchestratorHintText segments={orchestratorContextHintSegments(true)} t={t} />
           <Text color={t.color.muted} wrap="truncate-end">
-            {S.draftModel(draftModelDisplayLabel(draftModel))}
+            model: {draftModelDisplayLabel(draftModel)}
           </Text>
         </>
       ) : (
         <Box flexDirection="column" marginTop={1}>
           <OrchestratorHintText
             segments={
-              selectedKind === 'history' ? resumeRowContextHintSegments() : orchestratorContextHintSegments(false)
+              selectedKind === 'history' ? resumeRowContextHintSegments : orchestratorContextHintSegments(false)
             }
             t={t}
           />
           <Text color={t.color.muted} wrap="truncate-end">
-            {S.selectNewPrefix}
-            <Text color={newSessionMarkerColor(t, false)}>{S.newRowMarker}</Text>
-            {S.selectNewSuffix}
+            Select <Text color={newSessionMarkerColor(t, false)}>+new</Text> to type a prompt
           </Text>
         </Box>
       )}
 
-      <OrchestratorHintText segments={orchestratorGlobalHotkeyHintSegments()} t={t} />
+      <OrchestratorHintText segments={orchestratorGlobalHotkeyHintSegments} t={t} />
     </Box>
   )
 }

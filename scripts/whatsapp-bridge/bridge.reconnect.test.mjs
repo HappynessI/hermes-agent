@@ -21,6 +21,7 @@ import {
 } from './bridge_helpers.js';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // -- createReconnectScheduler ---------------------------------------------
 
@@ -51,7 +52,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
   assert.equal(attempts, 1);
   assert.equal(logs.length, 1);
-  assert.match(logs[0], /boom/);
+  assert.match(logs[0], /Reconnect failed \(boom\)/);
   assert.equal(timers.length, 2, 'rejection must schedule a retry');
   assert.equal(timers[1].ms, 5000);
 
@@ -110,6 +111,8 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   );
   assert.equal(await resolveVersion(), null);
   assert.equal(logs.length, 1);
+  assert.match(logs[0], /version fetch timed out/);
+  assert.match(logs[0], /library default/);
 }
 
 // After one success, later failures fall back to the cached version.
@@ -128,6 +131,20 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(await resolveVersion(), [2, 3000, 42]);
   assert.equal(logs.length, 1);
   assert.match(logs[0], /network down/);
+  assert.match(logs[0], /cached version/);
+}
+
+// The losing timeout timer is cleared after a fast success, so the resolver
+// does not hold the event loop open for the full timeout window.
+{
+  const resolveVersion = createVersionResolver(
+    async () => ({ version: [2, 3000, 1] }),
+    { timeoutMs: 60_000, log: () => {} },
+  );
+  const before = Date.now();
+  await resolveVersion();
+  await sleep(10);
+  assert.ok(Date.now() - before < 1000);
 }
 
 console.log('bridge.reconnect.test.mjs: all assertions passed');

@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest'
 
-import { splitRunItems, technicalTrace } from './fallback'
+import { isCardTool, splitRunItems, technicalTrace } from './fallback'
+
+describe('isCardTool', () => {
+  it('keeps what the user has to look at out of a summary', () => {
+    // A diff is the deliverable, a clarify is a question waiting on an answer,
+    // an image is the thing that was asked for. None of them survives being
+    // folded into "used 3 tools".
+    for (const toolName of ['clarify', 'image_generate', 'edit_file', 'patch', 'write_file']) {
+      expect(isCardTool(toolName)).toBe(true)
+    }
+  })
+
+  it('treats reads, searches and commands as ephemeral activity', () => {
+    for (const toolName of ['read_file', 'search_files', 'terminal', 'execute_code', 'web_search']) {
+      expect(isCardTool(toolName)).toBe(false)
+    }
+  })
+})
 
 describe('splitRunItems', () => {
   it('collapses a stretch of activity into one run', () => {

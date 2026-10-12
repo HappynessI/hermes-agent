@@ -1,21 +1,13 @@
-import { useStore } from '@nanostores/react'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import {
-  Command,
-  CommandEmpty,
-  CommandInput,
-  CommandItem,
-  CommandItemCheck,
-  CommandList
-} from '@/components/ui/command'
+import { Command, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { $appLocaleVersion, type LanguageOption, languageOptions, type Locale, localeMeta, useI18n } from '@/i18n'
+import { type Locale, LOCALE_META, useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { ChevronDown, Globe } from '@/lib/icons'
+import { Check, ChevronDown, Globe } from '@/lib/icons'
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { notifyError } from '@/store/notifications'
@@ -27,15 +19,13 @@ export interface LanguageSwitcherProps {
 }
 
 interface LanguageCommandProps {
-  allLocales: LanguageOption[]
+  allLocales: Array<[Locale, (typeof LOCALE_META)[Locale]]>
   autoFocus?: boolean
   disabled?: boolean
   locale: Locale
   noResults: string
   onSelect: (code: Locale) => void
   searchPlaceholder: string
-  /** `menu` inside the desktop popover; the mobile sheet keeps the palette rows. */
-  variant?: 'default' | 'menu'
 }
 
 export function LanguageSwitcher({ className, collapsed = false, dropUp = false }: LanguageSwitcherProps) {
@@ -43,12 +33,8 @@ export function LanguageSwitcher({ className, collapsed = false, dropUp = false 
   const [open, setOpen] = useState(false)
   const isMobile = useIsMobile()
   const useMobileSheet = Boolean(dropUp && isMobile)
-  // Bundled ∪ plugin-registered ∪ backend `i18n.languages`; the registry
-  // version re-lists when a pack lands after first paint.
-  const registryVersion = useStore($appLocaleVersion)
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- registryVersion is the registry's change token
-  const allLocales = useMemo(() => languageOptions(), [registryVersion])
-  const current = allLocales.find(option => option.id === locale) ?? { id: locale, ...localeMeta(locale) }
+  const current = LOCALE_META[locale]
+  const allLocales = Object.entries(LOCALE_META) as Array<[Locale, typeof current]>
   const title = t.language.switchTo
 
   const selectLocale = async (code: Locale) => {
@@ -85,7 +71,7 @@ export function LanguageSwitcher({ className, collapsed = false, dropUp = false 
     >
       <span className="inline-flex min-w-0 items-center gap-2">
         <Globe className="size-3.5 shrink-0" />
-        {!collapsed && <span className="truncate">{current.endonym}</span>}
+        {!collapsed && <span className="truncate">{current.name}</span>}
       </span>
       {!collapsed && <ChevronDown className="size-3 shrink-0 opacity-70" />}
     </Button>
@@ -116,7 +102,7 @@ export function LanguageSwitcher({ className, collapsed = false, dropUp = false 
   return (
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent align="end" className="w-56" side={dropUp ? 'top' : 'bottom'} variant="menu">
+      <PopoverContent align="end" className="w-56 p-0" side={dropUp ? 'top' : 'bottom'}>
         <LanguageCommand
           allLocales={allLocales}
           autoFocus
@@ -125,7 +111,6 @@ export function LanguageSwitcher({ className, collapsed = false, dropUp = false 
           noResults={t.language.noResults}
           onSelect={code => void selectLocale(code)}
           searchPlaceholder={t.language.searchPlaceholder}
-          variant="menu"
         />
       </PopoverContent>
     </Popover>
@@ -139,8 +124,7 @@ function LanguageCommand({
   locale,
   noResults,
   onSelect,
-  searchPlaceholder,
-  variant = 'default'
+  searchPlaceholder
 }: LanguageCommandProps) {
   const [search, setSearch] = useState('')
 
@@ -153,35 +137,38 @@ function LanguageCommand({
   const q = normalize(search)
 
   const filtered = allLocales.filter(
-    option =>
+    ([code, meta]) =>
       !q ||
-      option.endonym.toLowerCase().includes(q) ||
-      (option.englishName?.toLowerCase().includes(q) ?? false) ||
-      option.id.toLowerCase().includes(q)
+      meta.name.toLowerCase().includes(q) ||
+      meta.englishName.toLowerCase().includes(q) ||
+      code.toLowerCase().includes(q)
   )
 
   return (
-    <Command className="bg-transparent" shouldFilter={false} variant={variant}>
+    <Command className="bg-transparent" shouldFilter={false}>
       <CommandInput autoFocus={autoFocus} onValueChange={setSearch} placeholder={searchPlaceholder} value={search} />
-      <CommandList className={variant === 'menu' ? undefined : 'max-h-80 p-1'}>
-        <CommandEmpty>{noResults}</CommandEmpty>
-        {filtered.map(option => {
-          const selected = option.id === locale
+      <CommandList className="max-h-80 p-1">
+        {filtered.length === 0 ? (
+          <div className="py-6 text-center text-sm text-muted-foreground">{noResults}</div>
+        ) : (
+          filtered.map(([code, meta]) => {
+            const selected = code === locale
 
-          return (
-            <CommandItem
-              className={cn(selected && 'font-medium')}
-              disabled={disabled}
-              key={option.id}
-              onSelect={() => onSelect(option.id)}
-              value={option.id}
-            >
-              <span className="min-w-0 flex-1 truncate">{option.endonym}</span>
-              <span className="font-mono text-[0.65rem] uppercase text-(--ui-text-tertiary)">{option.id}</span>
-              <CommandItemCheck checked={selected} />
-            </CommandItem>
-          )
-        })}
+            return (
+              <CommandItem
+                className={cn(selected ? 'font-medium text-foreground' : 'text-muted-foreground')}
+                disabled={disabled}
+                key={code}
+                onSelect={() => onSelect(code)}
+                value={code}
+              >
+                <Check className={cn('size-3.5 shrink-0 text-primary', !selected && 'invisible')} />
+                <span className="min-w-0 flex-1 truncate">{meta.name}</span>
+                <span className="font-mono text-[0.65rem] uppercase text-(--ui-text-tertiary)">{code}</span>
+              </CommandItem>
+            )
+          })
+        )}
       </CommandList>
     </Command>
   )

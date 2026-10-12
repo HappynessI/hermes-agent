@@ -1,12 +1,12 @@
 ---
-title: "Peft — Fine-tune large LLMs with LoRA on limited GPU memory"
-sidebar_label: "Peft"
+title: "Peft Fine Tuning — Fine-tune large LLMs with LoRA on limited GPU memory"
+sidebar_label: "Peft Fine Tuning"
 description: "Fine-tune large LLMs with LoRA on limited GPU memory"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# Peft
+# Peft Fine Tuning
 
 Fine-tune large LLMs with LoRA on limited GPU memory.
 

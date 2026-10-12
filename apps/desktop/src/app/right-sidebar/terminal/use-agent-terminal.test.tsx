@@ -137,7 +137,7 @@ describe('useAgentTerminal', () => {
   it('unmounts safely while initial font preparation is pending', async () => {
     const { unmount } = render(<Harness />)
 
-    await waitFor(() => expect(globalThis.document.fonts.load).toHaveBeenCalled())
+    await waitFor(() => expect(globalThis.document.fonts.load).toHaveBeenCalledTimes(3))
 
     expect(() => unmount()).not.toThrow()
     expect(xterm.dispose).toHaveBeenCalledOnce()

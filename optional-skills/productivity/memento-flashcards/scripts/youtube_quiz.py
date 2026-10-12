@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch YouTube transcripts for Memento quiz generation.
 
-Requires the isolated PM helper environment described in memento-flashcards/SKILL.md.
+Requires: pip install youtube-transcript-api
 The quiz question *generation* is done by the agent's LLM — this script only fetches transcripts.
 """
 
@@ -32,7 +32,7 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         _out({
             "ok": False,
             "error": "missing_dependency",
-            "message": "Use the isolated PM helper environment described in memento-flashcards/SKILL.md.",
+            "message": "Run: pip install youtube-transcript-api",
         })
         sys.exit(1)
 

@@ -231,6 +231,6 @@ hermes cron remove <job_id>         # 删除任务
 
 ## 相关文档
 
-- [Cron 功能指南](../user-guide/features/cron.md)
+- [Cron 功能指南](/user-guide/features/cron)
 - [Gateway 内部机制](./gateway-internals.md)
 - [Agent 循环内部机制](./agent-loop.md)

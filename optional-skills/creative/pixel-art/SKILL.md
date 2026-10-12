@@ -136,19 +136,17 @@ pixel_art("in.png", "out.png", preset="snes", palette="PICO_8", block=6)
 
 ```python
 import sys
-import os
-sys.path.insert(0, os.path.expanduser("~/.hermes/skills/creative/pixel-art/scripts"))
+sys.path.insert(0, "/home/teknium/.hermes/skills/creative/pixel-art/scripts")
 from pixel_art import pixel_art
 from pixel_art_video import pixel_art_video
 
 # 1. Convert to pixel art
-out = os.path.expanduser("~/.hermes/cache/scratch")
-pixel_art("/path/to/photo.jpg", f"{out}/pixel.png", preset="nes")
+pixel_art("/path/to/photo.jpg", "/tmp/pixel.png", preset="nes")
 
 # 2. Animate (optional)
 pixel_art_video(
-    f"{out}/pixel.png",
-    f"{out}/pixel.mp4",
+    "/tmp/pixel.png",
+    "/tmp/pixel.mp4",
     scene="night",
     duration=6,
     fps=15,
@@ -160,7 +158,7 @@ pixel_art_video(
 ### CLI
 
 ```bash
-cd ~/.hermes/skills/creative/pixel-art/scripts
+cd /home/teknium/.hermes/skills/creative/pixel-art/scripts
 
 python pixel_art.py in.jpg out.png --preset gameboy
 python pixel_art.py in.jpg out.png --preset snes --palette PICO_8 --block 6

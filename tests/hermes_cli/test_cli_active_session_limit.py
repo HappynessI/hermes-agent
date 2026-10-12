@@ -26,8 +26,9 @@ def test_cli_claim_active_session_respects_global_limit(tmp_path, monkeypatch):
     try:
         assert cli._claim_active_session("cli") is False
         assert len(printed) == 1
+        assert "active session limit (1/1)" in printed[0]
         # Names the holding surface ("tui"), not the blocked one.
-        assert "tui" in printed[0]
+        assert "Held by: tui" in printed[0]
 
         held.release()
 

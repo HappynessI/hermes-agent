@@ -18,8 +18,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from hermes_cli import kanban_db as kb
-from hermes_cli import kanban_db_connect as kbc
-from hermes_cli import kanban_db_dispatch as kbd
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +37,7 @@ def kanban_home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def conn(kanban_home):
-    c = kbc.connect()
+    c = kb.connect()
     yield c
     c.close()
 
@@ -108,6 +106,10 @@ def test_create_task_with_model_and_provider(conn):
     assert ev.payload["provider_override"] == "openrouter"
 
 
+def test_migration_adds_provider_override_column(conn):
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+    assert "model_override" in cols
+    assert "provider_override" in cols
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +118,7 @@ def test_create_task_with_model_and_provider(conn):
 
 
 def _spawn_and_capture(monkeypatch, tmp_path, task):
-    monkeypatch.setattr(kbd, "_resolve_hermes_argv", lambda: ["hermes"])
+    monkeypatch.setattr(kb, "_resolve_hermes_argv", lambda: ["hermes"])
     captured = {}
 
     class FakeProc:
@@ -129,7 +131,7 @@ def _spawn_and_capture(monkeypatch, tmp_path, task):
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     workspace = tmp_path / "ws"
     workspace.mkdir(exist_ok=True)
-    kbd._default_spawn(task, str(workspace))
+    kb._default_spawn(task, str(workspace))
     return captured["cmd"]
 
 
@@ -241,6 +243,12 @@ def test_reasoning_effort_survives_clearing_the_model(conn):
     assert t.reasoning_effort == "ultra"
 
 
+def test_reasoning_effort_without_a_model_override(conn):
+    """A task may run the profile's OWN model at a different depth."""
+    tid = kb.create_task(conn, title="t", assignee="worker", reasoning_effort="low")
+    t = kb.get_task(conn, tid)
+    assert t.model_override is None
+    assert t.reasoning_effort == "low"
 
 
 def test_spawn_passes_reasoning_without_a_model(monkeypatch, tmp_path, conn):

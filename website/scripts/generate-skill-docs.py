@@ -14,18 +14,15 @@ Sidebar is updated to nest all per-skill pages under Skills → Bundled / Option
 
 from __future__ import annotations
 import re
-import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO))
-import hermes_yaml as yaml
+import yaml
 
+REPO = Path(__file__).resolve().parent.parent.parent
 DOCS = REPO / "website" / "docs"
 SKILLS_PAGES = DOCS / "user-guide" / "skills"
-ZH_HANS_DOCS = REPO / "website" / "i18n" / "zh-Hans" / "docusaurus-plugin-content-docs" / "current"
 
 SKILL_SOURCES = [
     ("bundled", REPO / "skills"),
@@ -398,10 +395,9 @@ def render_skill_page(
             if skill_index is not None:
                 target_meta = skill_index.get(r)
             if target_meta is not None:
-                # Relative file link: resolves on the site and on GitHub (#114428).
                 href = (
-                    f"../../{target_meta['source_kind']}"
-                    f"/{target_meta['category']}/{page_id(target_meta)}.md"
+                    f"/docs/user-guide/skills/{target_meta['source_kind']}"
+                    f"/{target_meta['category']}/{page_id(target_meta)}"
                 )
                 link_parts.append(f"[`{r}`]({href})")
             else:
@@ -499,7 +495,7 @@ def build_catalog_md_bundled(entries: list[tuple[dict[str, Any], dict[str, Any]]
             desc = (fm.get("description") or "").strip()
             if len(desc) > 240:
                 desc = desc[:237].rstrip() + "..."
-            link_target = f"../user-guide/skills/bundled/{meta['category']}/{page_id(meta)}.md"
+            link_target = f"/docs/user-guide/skills/bundled/{meta['category']}/{page_id(meta)}"
             path = f"`{meta['rel_path']}`"
             desc_esc = mdx_escape_body(desc).replace("|", "\\|").replace("\n", " ")
             lines.append(
@@ -560,7 +556,7 @@ def build_catalog_md_optional(entries: list[tuple[dict[str, Any], dict[str, Any]
             desc = (fm.get("description") or "").strip()
             if len(desc) > 240:
                 desc = desc[:237].rstrip() + "..."
-            link_target = f"../user-guide/skills/optional/{meta['category']}/{page_id(meta)}.md"
+            link_target = f"/docs/user-guide/skills/optional/{meta['category']}/{page_id(meta)}"
             desc_esc = mdx_escape_body(desc).replace("|", "\\|").replace("\n", " ")
             lines.append(f"| [**{name}**]({link_target}) | {desc_esc} |")
         lines.append("")
@@ -736,34 +732,6 @@ def write_sidebar(entries):
     print(f"Updated sidebar: {sidebar_path}")
 
 
-def prune_stale_pages(written: set[Path]) -> int:
-    """Delete generated pages this run did not write, plus their zh-Hans mirror twins.
-
-    A skill that moves category, merges into a sibling, or leaves the shipped set
-    otherwise keeps its old page forever: the catalogs and sidebar stop pointing at
-    it, but cross-links still reach a page advertising a skill nobody can install
-    under that name. Only the generated subtrees are swept, never hand-authored
-    pages next to them.
-    """
-    pruned = 0
-    for kind in ("bundled", "optional"):
-        for page in sorted((SKILLS_PAGES / kind).rglob("*.md")):
-            if page.resolve() in written:
-                continue
-            page.unlink()
-            twin = ZH_HANS_DOCS / page.relative_to(DOCS)
-            if twin.exists():
-                twin.unlink()
-            pruned += 1
-        # Mirror copies whose English page is already gone (a hand-deleted page).
-        zh_kind = ZH_HANS_DOCS / SKILLS_PAGES.relative_to(DOCS) / kind
-        for twin in sorted(zh_kind.rglob("*.md")) if zh_kind.exists() else []:
-            if not (DOCS / twin.relative_to(ZH_HANS_DOCS)).exists():
-                twin.unlink()
-                pruned += 1
-    return pruned
-
-
 def main():
     entries = discover_skills()
     print(f"Discovered {len(entries)} skills")
@@ -777,7 +745,7 @@ def main():
             skill_index[name] = meta
 
     # Write per-skill pages
-    written: set[Path] = set()
+    written = 0
     for meta, parsed in entries:
         out_path = page_output_path(meta)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -785,12 +753,8 @@ def main():
             meta, parsed["frontmatter"], parsed["body"], skill_index=skill_index
         )
         out_path.write_text(content, encoding="utf-8")
-        written.add(out_path.resolve())
-    print(f"Wrote {len(written)} per-skill pages under {SKILLS_PAGES}")
-
-    pruned = prune_stale_pages(written)
-    if pruned:
-        print(f"Pruned {pruned} page(s) whose skill no longer ships")
+        written += 1
+    print(f"Wrote {written} per-skill pages under {SKILLS_PAGES}")
 
     # Regenerate catalogs
     bundled_catalog = build_catalog_md_bundled(entries)

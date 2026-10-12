@@ -1,0 +1,795 @@
+//! OWL 导入：原文保真 → 投影 → 预览 → 落库。
+//!
+//! **预览与落库走同一个计划**。两条独立的代码路径迟早分叉，而分叉的后果是
+//! 用户点确认之后发生的事与他刚看过的不一样——那比没有预览更糟。
+//!
+//! 匹配按 **IRI** 不按 key：上游改一次 `rdfs:label`，派生出的 key 就变了，
+//! 按 key 匹配会把同一个类当新类建出来，实体全留在孤儿上（见 0001 P2）。
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+use utopia_core::AppResult;
+use utopia_ingest::ontology_rdf::{self, OwlProjection, RdfFormat};
+use uuid::Uuid;
+
+use crate::state::AppState;
+
+/// 一个类/属性在这次导入里的去向。
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Disposition {
+    /// 本体里没有这个 IRI → 新建
+    Create,
+    /// IRI 已在 → 更新标签与描述（key 不动：它可能已被引用）
+    Update,
+    /// key 被另一个 IRI 占着 → 跳过并报告，不悄悄改名也不覆盖
+    KeyTaken,
+    /// key 被另一个 IRI 占着，但对齐表说那两个是**同一个东西** → 跳过且不算冲突。
+    /// 与 KeyTaken 分开，是因为它不需要人裁：少建一个重复的类正是想要的结果
+    Aligned,
+    /// 词表自己说这条属性已被另一条取代（`schema:supersededBy`），而取代它的那条
+    /// 在这个文件里或库里 → 不建。建了就是两个 key 指同一个关系：抽取的精确 key
+    /// 命中让 `employees` 与 `employee` 永久分家，屈折归一根本没机会开口（#560）。
+    /// 不建之后，模型说 `employees` 会折到 `employee` 上
+    Superseded,
+}
+
+/// 一个属性在这次导入里会不会被建出来，以及为什么。
+///
+/// **预览必须说得出为什么**。上一版只报了"解析到 54 个属性"，读者无从判断
+/// 那是"都会建"还是"一个都不建"——而实际上是后者。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "outcome", content = "detail")]
+pub enum AttrNote {
+    /// 会建，用这个 datatype
+    Datatype(&'static str),
+    /// 会建成 text：没写 range，词汇表没做声明，text 是诚实的超集
+    NoRange,
+    /// 会建成 text：range 是可读字面量但我们表达不了它的类型（`xsd:time` 等）。
+    /// 报出原 IRI，人可以改成更合适的类型；但值先落下来，不能因为类型糙就丢知识
+    DegradedToText(String),
+    /// 不建：抽取器不可能从散文里读出这种值（二进制、XML 片段、XML 内部标识）。
+    /// 建了也永远填不上，只会给每个文本块的提示词多一行死噪音
+    UnusableRange(String),
+    /// 不建：没写 domain。属性必须挂在一个类上，这是 store 层的硬约束
+    NoDomain,
+
+    /// 不建：domain 指向的类**在这个文件里，但被跳过了**（多半是 key 撞车）。
+    /// 与 UnknownDomain 分开报，因为处置不同：这个能通过给现有的类改名解开
+    DomainSkipped(String),
+    /// 不建：domain 指向一个这个文件里压根没有的类（外部词汇表）
+    UnknownDomain(String),
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PlannedItem {
+    pub iri: String,
+    pub key: String,
+    pub label: String,
+    pub has_description: bool,
+    pub disposition: Disposition,
+    /// 关系专用：导入声明它是函数性的 —— 预览必须把这些单独列出来
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub functional: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_with: Option<String>,
+    /// 属性专用：会以什么 datatype 建，或为什么建不了
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attr: Option<AttrNote>,
+}
+
+/// 一次导入的完整计划。预览返回它，落库也执行它。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImportPlan {
+    pub format: String,
+    pub triples: usize,
+    pub classes: Vec<PlannedItem>,
+    pub relations: Vec<PlannedItem>,
+    pub attributes: Vec<PlannedItem>,
+    /// 出现过但今天不消费的公理 → 次数。**不是"已跳过"，是"暂未投影"**
+    pub unprojected: Vec<(String, usize)>,
+    /// 没有 `rdfs:comment` 的类数。它们在抽取里质量会明显偏低——
+    /// description 逐字进提示词，是模型判断"什么算这个类"的唯一依据
+    pub classes_without_description: usize,
+    /// 声明为函数性的关系数。**这是 part_of 那个坑的企业版**：本体声明唯一，
+    /// 数据不遵守，导完就是一队假冲突
+    pub functional_relations: usize,
+}
+
+/// 属性的去向。**domain 先判**：没有 domain 的属性根本建不出来，
+/// 这时它的 range 是什么已经不重要了。
+fn attr_note(
+    p: &ontology_rdf::OwlProperty,
+    vocab: &ontology_rdf::VocabDatatypes,
+    resolvable: &HashSet<&str>,
+    in_file: &HashSet<&str>,
+) -> AttrNote {
+    if p.domains.is_empty() {
+        return AttrNote::NoDomain;
+    }
+    // **一个都解析不出来才算失败**：多个 domain 里有一部分被跳过时，
+    // 属性仍然建，只是少挂几个类——比整条丢掉强，而被跳过的那些类
+    // 在计划里各自报告过 key 撞车
+    if !p.domains.iter().any(|d| resolvable.contains(d.as_str())) {
+        let first = &p.domains[0];
+        return if in_file.contains(first.as_str()) {
+            AttrNote::DomainSkipped(first.clone())
+        } else {
+            AttrNote::UnknownDomain(first.clone())
+        };
+    }
+    match ontology_rdf::map_range_of(p, vocab) {
+        ontology_rdf::RangeMapping::Datatype(dt) => AttrNote::Datatype(dt),
+        ontology_rdf::RangeMapping::Absent => AttrNote::NoRange,
+        ontology_rdf::RangeMapping::Degraded(iri) => AttrNote::DegradedToText(iri),
+        ontology_rdf::RangeMapping::Unusable(iri) => AttrNote::UnusableRange(iri),
+    }
+}
+
+/// 属性会不会被建出来，以及用什么 datatype。落库与统计共用它，
+/// 免得"预览说会建"和"实际建了"两处各判一次而分叉。
+fn attr_datatype(note: &AttrNote) -> Option<&'static str> {
+    match note {
+        AttrNote::Datatype(dt) => Some(dt),
+        // 没写 range，或写了但类型表达不了：值仍是字面量，
+        // text 是拦不住任何东西的诚实超集
+        AttrNote::NoRange | AttrNote::DegradedToText(_) => Some("text"),
+        _ => None,
+    }
+}
+
+impl ImportPlan {
+    /// 建不出来的属性，按原因分组计数。**预览里报总数是不够的**——
+    /// "54 个属性"读不出那是都会建还是一个都不建，而实际上取决于原因。
+    pub fn attr_skips(&self) -> BTreeMap<&str, usize> {
+        let mut out: BTreeMap<&str, usize> = BTreeMap::new();
+        for a in &self.attributes {
+            if a.disposition == Disposition::KeyTaken {
+                *out.entry("key_taken").or_default() += 1;
+                continue;
+            }
+            if a.disposition == Disposition::Superseded {
+                *out.entry("superseded").or_default() += 1;
+                continue;
+            }
+            let reason = match a.attr.as_ref() {
+                Some(AttrNote::Datatype(_))
+                | Some(AttrNote::NoRange)
+                | Some(AttrNote::DegradedToText(_)) => continue,
+                Some(AttrNote::UnusableRange(_)) => "unusable_range",
+                Some(AttrNote::NoDomain) => "no_domain",
+                Some(AttrNote::DomainSkipped(_)) => "domain_skipped",
+                Some(AttrNote::UnknownDomain(_)) => "unknown_domain",
+                None => continue,
+            };
+            *out.entry(reason).or_default() += 1;
+        }
+        out
+    }
+}
+
+/// 解析文件并对着现有本体算出计划。不写任何东西。
+pub async fn plan(
+    state: &AppState,
+    kb_id: Uuid,
+    filename: &str,
+    bytes: &[u8],
+) -> AppResult<(ImportPlan, OwlProjection, RdfFormat)> {
+    let format = RdfFormat::detect(filename, bytes);
+    let proj = ontology_rdf::project(bytes, format).map_err(|e| {
+        utopia_core::AppError::invalid_detail(
+            "bad_ontology_file",
+            "Could not parse this ontology file",
+            e.to_string(),
+        )
+    })?;
+
+    // 现有本体：按 IRI 与按 key 各建一份索引，两种冲突分别判
+    let etypes = utopia_store::graph::entity_types(&state.pool, kb_id).await?;
+    let rtypes = utopia_store::graph::relation_types(&state.pool, kb_id).await?;
+    let e_by_iri: HashMap<&str, &_> = etypes
+        .iter()
+        .filter_map(|t| t.iri.as_deref().map(|i| (i, t)))
+        .collect();
+    let e_by_key: HashMap<&str, &_> = etypes.iter().map(|t| (t.key.as_str(), t)).collect();
+    let r_by_iri: HashMap<&str, &_> = rtypes
+        .iter()
+        .filter_map(|t| t.iri.as_deref().map(|i| (i, t)))
+        .collect();
+    let r_by_key: HashMap<&str, &_> = rtypes.iter().map(|t| (t.key.as_str(), t)).collect();
+
+    // 这次结束后能解析出 id 的类 IRI：文件里新建或更新的，加上库里已有同 IRI 的。
+    // key 撞车被跳过的**不在其列**——它不会被建出来，挂在它上面的属性也就无处可挂
+    // 本次导入内部也会撞 key：不同 IRI 派生出同一个短标签
+    //（FOAF 的 familyName 与 family_name 都成了 family_name）。
+    // 只对着库里查是不够的——那样第二个在预览里显示"会新建"，
+    // 落库时被 ON CONFLICT 悄悄丢掉，预览就说了假话
+    //
+    // **两个命名空间，不是一个**：类进 entity_types、关系与属性进 relation_types，
+    // 各有各的 (kb_id, key) 唯一约束。合成一张表就是凭空多出一条约束——
+    // 而且代价具体：schema.org 的 location / address 是属性，却先被
+    // OMG Commons 的 Location / Address 两个**类**占了名字（类先处理），
+    // 于是抽取时模型点名要 location，库里偏偏没有
+    let mut claimed_class: HashMap<&str, &str> = HashMap::new();
+    let mut claimed_prop: HashMap<&str, &str> = HashMap::new();
+
+    let mut classes = Vec::new();
+    for c in &proj.classes {
+        // 对齐表判为"同名不同义"时，用它声明的 key 顶替派生出来的那个
+        let mut renamed_key: Option<&'static str> = None;
+        let (disposition, conflict_with) = if let Some(prev) = claimed_class.get(c.key.as_str()) {
+            (Disposition::KeyTaken, Some((*prev).to_string()))
+        } else if e_by_iri.contains_key(c.iri.as_str()) {
+            (Disposition::Update, None)
+        } else if let Some(existing) = e_by_key.get(c.key.as_str()) {
+            match existing.iri.as_deref() {
+                // **占位者没有 IRI：认领它。**
+                //
+                // 没有 IRI 意味着这个类是本地起的名字（种子本体、或者手工建的），
+                // 不是另一个词汇表的同名词。导入说的是"这个 IRI 就是那个类"，
+                // 而这一步不做，整棵树就是断的：schema.org 的 Organization
+                // 撞上内置的 organization 被跳过，于是 Corporation 的父类指向
+                // 一个没建出来的东西——内置那几个基类一个子类都挂不上，
+                // 类型精化无从谈起。
+                None => (Disposition::Update, None),
+                // 已经有一个**不同的** IRI：两个词汇表争同一个短标签。
+                // 先查预制包的对齐表——那是**声明**的处置，重导入结果一样，
+                // 所以下面那条"不自动加后缀"的理由对它不适用
+                Some(other) => match crate::pack_alignment::lookup(&c.iri, other) {
+                    // 同义：已有的那个就是它，少建一个重复的类正是想要的
+                    Some(crate::pack_alignment::Alignment::SameAs) => {
+                        (Disposition::Aligned, existing.iri.clone())
+                    }
+                    // 同名不同义：换一个声明好的 key 建出来
+                    Some(crate::pack_alignment::Alignment::Rename(k)) => {
+                        renamed_key = Some(k);
+                        (Disposition::Create, None)
+                    }
+                    // 表里没有：这是真冲突。不自动加后缀——那会让重导入
+                    // 认不出自己上次建的是哪个
+                    None => (Disposition::KeyTaken, existing.iri.clone()),
+                },
+            }
+        } else {
+            (Disposition::Create, None)
+        };
+        // 改名与原名都是借用（前者 'static，后者借自 proj），统一成一个引用用完再落地
+        let key: &str = renamed_key.unwrap_or(c.key.as_str());
+        if !matches!(disposition, Disposition::KeyTaken | Disposition::Aligned) {
+            claimed_class.insert(key, c.iri.as_str());
+        }
+        classes.push(PlannedItem {
+            iri: c.iri.clone(),
+            key: key.to_string(),
+            label: c.label.clone(),
+            has_description: !c.description.trim().is_empty(),
+            disposition,
+            functional: false,
+            conflict_with,
+            attr: None,
+        });
+    }
+
+    // 文件里出现过的类（含被跳过的）——用来区分它被跳过了与它压根不在这个文件里
+    let in_file: HashSet<&str> = proj.classes.iter().map(|c| c.iri.as_str()).collect();
+    let resolvable: HashSet<&str> = classes
+        .iter()
+        .filter(|c| c.disposition != Disposition::KeyTaken)
+        .map(|c| c.iri.as_str())
+        .chain(e_by_iri.keys().copied())
+        .collect();
+
+    let mut relations = Vec::new();
+    let mut attributes = Vec::new();
+    // 让位的属性只在取代它的那条**能落地**时才跳过：取代者在这个文件里，或库里已有。
+    // 取代者不在场时照建——否则一份只带了让位方的小词表会一条都建不出来
+    let prop_iris: HashSet<&str> = proj.properties.iter().map(|p| p.iri.as_str()).collect();
+    for p in &proj.properties {
+        let successor = p
+            .superseded_by
+            .as_deref()
+            .filter(|s| prop_iris.contains(s) || r_by_iri.contains_key(s));
+        let (disposition, conflict_with) = if let Some(s) = successor {
+            (Disposition::Superseded, Some(s.to_string()))
+        } else if let Some(prev) = claimed_prop.get(p.key.as_str()) {
+            (Disposition::KeyTaken, Some((*prev).to_string()))
+        } else if r_by_iri.contains_key(p.iri.as_str()) {
+            (Disposition::Update, None)
+        } else if let Some(existing) = r_by_key.get(p.key.as_str()) {
+            (Disposition::KeyTaken, existing.iri.clone())
+        } else {
+            (Disposition::Create, None)
+        };
+        if !matches!(disposition, Disposition::KeyTaken | Disposition::Superseded) {
+            claimed_prop.insert(p.key.as_str(), p.iri.as_str());
+        }
+        let mut item = PlannedItem {
+            iri: p.iri.clone(),
+            key: p.key.clone(),
+            label: p.label.clone(),
+            has_description: !p.description.trim().is_empty(),
+            disposition,
+            functional: p.functional,
+            conflict_with,
+            attr: None,
+        };
+        if p.is_datatype {
+            item.attr = Some(attr_note(p, &proj.vocab_datatypes, &resolvable, &in_file));
+            attributes.push(item);
+        } else {
+            relations.push(item);
+        }
+    }
+
+    let mut unprojected: Vec<(String, usize)> = proj
+        .unprojected
+        .iter()
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+    unprojected.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+
+    let plan = ImportPlan {
+        format: format!("{format:?}").to_lowercase(),
+        triples: proj.triples,
+        classes_without_description: classes.iter().filter(|c| !c.has_description).count(),
+        functional_relations: relations.iter().filter(|r| r.functional).count(),
+        classes,
+        relations,
+        attributes,
+        unprojected,
+    };
+    Ok((plan, proj, format))
+}
+
+/// 装完一组包之后再过一遍：把 domain / range 指向**别的包里的类**的那些关系接上。
+///
+/// 单次导入认本文件里的类和库里已有的类（见 [`apply`] 里的 resolve），但包是挨个
+/// 装的：装 W3C Org 时 FOAF 还没来，`headOf` 的 `rdfs:domain foaf:Agent` 就落了空；
+/// 等 FOAF 装好，没人回头补。没有 domain 的谓词 `judge_direction` 不判方向，
+/// 反向的 `Project Aurora head_of Li Ting` 就原样进图（#222）。
+///
+/// 只补不删，关联表 ON CONFLICT DO NOTHING，重复跑无害。属性不在这里：属性的
+/// 去向在计划阶段就定了（没有 domain 的根本建不出来），事后补 domain 改不了它
+/// 已经是不是一列的事实
+pub async fn relink_domains_ranges(
+    state: &AppState,
+    kb_id: Uuid,
+    filename: &str,
+    bytes: &[u8],
+) -> AppResult<(usize, usize)> {
+    let format = RdfFormat::detect(filename, bytes);
+    let proj = ontology_rdf::project(bytes, format).map_err(|e| {
+        utopia_core::AppError::invalid_detail(
+            "bad_ontology_file",
+            "Could not parse this ontology file",
+            e.to_string(),
+        )
+    })?;
+    let classes: HashMap<String, Uuid> = utopia_store::graph::entity_types(&state.pool, kb_id)
+        .await?
+        .into_iter()
+        .filter_map(|t| t.iri.clone().map(|i| (i, t.id)))
+        .collect();
+    let relations: HashMap<String, Uuid> = utopia_store::graph::relation_types(&state.pool, kb_id)
+        .await?
+        .into_iter()
+        .filter_map(|r| r.iri.clone().map(|i| (i, r.id)))
+        .collect();
+    let mut link_d: Vec<(Uuid, Uuid)> = Vec::new();
+    let mut link_r: Vec<(Uuid, Uuid)> = Vec::new();
+    for p in &proj.properties {
+        if p.is_datatype {
+            continue;
+        }
+        let Some(&rid) = relations.get(&p.iri) else {
+            continue;
+        };
+        link_d.extend(
+            p.domains
+                .iter()
+                .filter_map(|d| classes.get(d).map(|&t| (rid, t))),
+        );
+        link_r.extend(
+            p.ranges
+                .iter()
+                .filter_map(|r| classes.get(r).map(|&t| (rid, t))),
+        );
+    }
+    utopia_store::ontology::link_domains_ranges_bulk(&state.pool, &link_d, &link_r).await?;
+    Ok((link_d.len(), link_r.len()))
+}
+
+/// 执行计划。属性在类之后落库——它们要挂在 domain 上，而 domain 要等
+/// 类先建好并解析 IRI → id（就是下面那个 `id_of`）。
+pub async fn apply(
+    state: &AppState,
+    kb_id: Uuid,
+    actor: Uuid,
+    filename: &str,
+    bytes: &[u8],
+) -> AppResult<(Uuid, ImportPlan)> {
+    let (plan, proj, format) = plan(state, kb_id, filename, bytes).await?;
+
+    // 第一层：原文按内容寻址进 blob。**先存原文再改本体**——投影失败可以重来，
+    // 原文丢了就永远回不去
+    let sha = sha256_hex(bytes);
+    state
+        .blob
+        .put(&sha, bytes)
+        .await
+        .map_err(utopia_core::AppError::Other)?;
+
+    let by_iri: HashMap<&str, &_> = proj.classes.iter().map(|c| (c.iri.as_str(), c)).collect();
+    // 已在库里的类：IRI → id。Aligned 要靠它把"同义的那个"接上父类引用
+    let existing_by_iri: HashMap<String, Uuid> =
+        utopia_store::graph::entity_types(&state.pool, kb_id)
+            .await?
+            .into_iter()
+            .filter_map(|t| t.iri.clone().map(|i| (i, t.id)))
+            .collect();
+    let mut created_classes = 0usize;
+    let mut updated_classes = 0usize;
+    // IRI → 本体里的 id，父类解析要用
+    let mut id_of: HashMap<String, Uuid> = HashMap::new();
+
+    // **新建的类一次插完，不逐条来。**
+    //
+    // 逐条 `execute(pool)` 每条各自提交，schema.org 那种量级（968 个类加约
+    // 1500 个属性）是五千次 fsync——实测导入 45 秒。同样的行数放进一条
+    // UNNEST 语句是 536 毫秒。Update 与 Aligned 留在下面逐条走：它们在
+    // 空库上是个位数，而且各自要读一次现状，批不起来。
+    let new_classes: Vec<(String, String, String, String)> = plan
+        .classes
+        .iter()
+        .filter(|i| i.disposition == Disposition::Create)
+        .filter_map(|i| by_iri.get(i.iri.as_str()).map(|c| (i, *c)))
+        // key 用 item 的：对齐表判为同名不同义时它是改过的那个
+        .map(|(i, c)| {
+            (
+                i.key.clone(),
+                c.label.clone(),
+                c.description.clone(),
+                c.iri.clone(),
+            )
+        })
+        .collect();
+    let created_ids =
+        utopia_store::ontology::create_entity_types_bulk(&state.pool, kb_id, &new_classes).await?;
+    for (key, label, _, iri) in &new_classes {
+        let _ = label;
+        if let Some(id) = created_ids.get(key) {
+            id_of.insert(iri.clone(), *id);
+            created_classes += 1;
+        }
+    }
+
+    for item in &plan.classes {
+        let Some(c) = by_iri.get(item.iri.as_str()) else {
+            continue;
+        };
+        match item.disposition {
+            // 上面已经批量建好了
+            Disposition::Create => {}
+            Disposition::Update => {
+                // 两种 Update：这个 IRI 上次导过（按 IRI 找得到），
+                // 或者它要认领一个同名的本地类（按 key 找，且那一行还没有 IRI）
+                let updated = utopia_store::ontology::update_type_from_import(
+                    &state.pool,
+                    kb_id,
+                    &c.iri,
+                    &c.label,
+                    &c.description,
+                )
+                .await?;
+                let id = match updated {
+                    Some(id) => Some(id),
+                    None => {
+                        utopia_store::ontology::adopt_iri_onto_key(
+                            &state.pool,
+                            kb_id,
+                            &c.key,
+                            &c.iri,
+                        )
+                        .await?
+                    }
+                };
+                if let Some(id) = id {
+                    id_of.insert(c.iri.clone(), id);
+                    updated_classes += 1;
+                }
+            }
+            // key 被占：报告过了，不动
+            // 同义：不建。但要把 IRI 指向已有那个类的 id，否则以它为父类的
+            // 子类会解析不到，整棵树在这里断掉
+            Disposition::Aligned => {
+                if let Some(target) = item.conflict_with.as_deref() {
+                    if let Some(id) = existing_by_iri.get(target) {
+                        id_of.insert(c.iri.clone(), *id);
+                    }
+                }
+            }
+            // 类没有让位一说（schema:supersededBy 只标属性），穷举是为了编译器替我们看着
+            Disposition::KeyTaken | Disposition::Superseded => {}
+        }
+    }
+
+    // 父类第二遍解析：第一遍时父类可能还没建出来
+    // (子, 父) 边先攒着，一次插完
+    let mut parent_edges: Vec<(Uuid, Uuid)> = Vec::new();
+    for c in &proj.classes {
+        let Some(&child) = id_of.get(&c.iri) else {
+            continue;
+        };
+        // **全部父类**，不再只取第一个。FOAF 的 Person 同时是 Agent 与
+        // SpatialThing，丢掉后一支就让 domain 在那支上的属性判定不过。
+        // 指向没被建出来的类的那些父自然落选——少一支比整条不挂强
+        let parents: Vec<Uuid> = c
+            .parents
+            .iter()
+            .filter_map(|iri| id_of.get(iri).copied())
+            .collect();
+        parent_edges.extend(parents.into_iter().map(|p| (child, p)));
+    }
+    // 一次插完。单条版每次都跑一个递归 CTE 查环，schema.org 有 975 条父类边，
+    // 就是 975 次递归查询加 975 次提交。
+    //
+    // **批量版不查环。** 单条版对成环的处置本来也只是跳过那一条（`let _ =`），
+    // 不中断导入；而导入完之后本体页仍然能发现并让人处理。用九百多次递归查询
+    // 换一个"发现得早一点"，不划算
+    utopia_store::ontology::set_parents_bulk(&state.pool, &parent_edges).await?;
+
+    // 类互斥同理攒一批（见 `relation_types` 的公理列）。指向没被建出来的类的那些自然落选——
+    // 一条互斥声明的两端都得在这个库里,才谈得上拿它判矛盾
+    let mut disjoint_edges: Vec<(Uuid, Uuid)> = Vec::new();
+    for c in &proj.classes {
+        let Some(&a) = id_of.get(&c.iri) else {
+            continue;
+        };
+        for other in &c.disjoint_with {
+            if let Some(&b) = id_of.get(other) {
+                disjoint_edges.push((a, b));
+            }
+        }
+    }
+    utopia_store::ontology::set_disjoint_bulk(&state.pool, kb_id, &disjoint_edges).await?;
+
+    let by_prop_iri: HashMap<&str, &_> = proj
+        .properties
+        .iter()
+        .map(|p| (p.iri.as_str(), p))
+        .collect();
+    // 关系。此前 apply 完全跳过它们——预览却在关系那行写着"N new"，
+    // 承诺了不会发生的事。这与今天修掉的 key 撞车缺陷是同一种。
+    //
+    // **functional / inverse_functional 照词汇表的声明写下去**：它们是时态引擎
+    // 自动闭合事实的依据，猜错会成批造假冲突（part_of 那次 59 条）。所以不猜——
+    // 词汇表说是就是，预览已经把它们单独列出来让人过目。
+    let mut created_rels = 0usize;
+    let mut updated_rels = 0usize;
+    let mut new_rels: Vec<utopia_store::ontology::BulkRelation> = Vec::new();
+    // (key, domains, ranges)：关系 id 要等批量插完才有，先按 key 记着
+    let mut pending_links: Vec<(String, Vec<Uuid>, Vec<Uuid>)> = Vec::new();
+    for item in &plan.relations {
+        if matches!(
+            item.disposition,
+            Disposition::KeyTaken | Disposition::Superseded
+        ) {
+            continue;
+        }
+        let Some(p) = by_prop_iri.get(item.iri.as_str()) else {
+            continue;
+        };
+        // domain/range 指向没被建出来的类时只丢那一个，不丢整条关系：
+        // 关系不像属性那样必须挂在类上，没有 domain 就是"不限主语类型"。
+        //
+        // **库里已有的类也算数。** 从前只认本文件里的类，于是 W3C Org 的
+        // `headOf rdfs:domain foaf:Agent` 在 FOAF 已经装好的库里照样丢 domain，
+        // 而没有 domain 的谓词 `judge_direction` 根本不判方向（#222）
+        let resolve = |iris: &[String]| -> Vec<Uuid> {
+            iris.iter()
+                .filter_map(|i| {
+                    id_of
+                        .get(i)
+                        .copied()
+                        .or_else(|| existing_by_iri.get(i).copied())
+                })
+                .collect()
+        };
+        let domains = resolve(&p.domains);
+        let ranges = resolve(&p.ranges);
+
+        if item.disposition == Disposition::Update {
+            if utopia_store::ontology::update_relation_from_import(
+                &state.pool,
+                kb_id,
+                &p.iri,
+                &p.label,
+                &p.description,
+                &domains,
+                &ranges,
+            )
+            .await?
+            {
+                updated_rels += 1;
+            }
+            continue;
+        }
+        // 新建的攒起来一次插——理由同上面的类
+        new_rels.push(utopia_store::ontology::BulkRelation {
+            key: p.key.clone(),
+            label: p.label.clone(),
+            description: p.description.clone(),
+            iri: p.iri.clone(),
+            kind: "relation",
+            datatype: None,
+            functional: p.functional,
+            inverse_functional: p.inverse_functional,
+            transitive: p.transitive,
+            symmetric: p.symmetric,
+            asymmetric: p.asymmetric,
+            irreflexive: p.irreflexive,
+        });
+        pending_links.push((p.key.clone(), domains, ranges));
+    }
+    let rel_ids =
+        utopia_store::ontology::create_relation_types_bulk(&state.pool, kb_id, &new_rels).await?;
+    created_rels += rel_ids.len();
+
+    // 逆与父属性指的是**另一个关系类型**，id 要等全部插完才有——所以是第二遍。
+    // 一遍过只能处理「父属性恰好排在前面」的文件，而 RDF 三元组没有顺序。
+    //
+    // 新建的与已存在的都收：一份本体重导时，这两条声明可能是这次才加上的
+    let mut inv_pairs: Vec<(String, String)> = Vec::new();
+    let mut sub_pairs: Vec<(String, String)> = Vec::new();
+    for item in &plan.relations {
+        let Some(p) = by_prop_iri.get(item.iri.as_str()) else {
+            continue;
+        };
+        if let Some(o) = &p.inverse_of {
+            inv_pairs.push((p.iri.clone(), o.clone()));
+        }
+        if let Some(o) = &p.sub_property_of {
+            sub_pairs.push((p.iri.clone(), o.clone()));
+        }
+    }
+    let (linked_inv, linked_sub) = utopia_store::ontology::link_property_axioms_bulk(
+        &state.pool,
+        kb_id,
+        &inv_pairs,
+        &sub_pairs,
+    )
+    .await?;
+    // 关联行也摊平：单条版对每条关系跑 4 句（两张表各一次 DELETE 一次 INSERT），
+    // 一千五百条关系就是六千次提交
+    let mut link_d: Vec<(Uuid, Uuid)> = Vec::new();
+    let mut link_r: Vec<(Uuid, Uuid)> = Vec::new();
+    for (key, domains, ranges) in &pending_links {
+        let Some(rid) = rel_ids.get(key) else {
+            continue;
+        };
+        link_d.extend(domains.iter().map(|d| (*rid, *d)));
+        link_r.extend(ranges.iter().map(|r| (*rid, *r)));
+    }
+    utopia_store::ontology::link_domains_ranges_bulk(&state.pool, &link_d, &link_r).await?;
+
+    // 属性：类建完、id_of 填好之后才轮到它们。计划里已经算出了每个属性的去向，
+    // **这里只执行，不重新判断**——两处各判一次就会分叉，而分叉意味着
+    // 预览说的和实际做的不是一回事
+    let mut created_attrs = 0usize;
+    let mut new_attrs: Vec<utopia_store::ontology::BulkRelation> = Vec::new();
+    let mut pending_attr_domains: Vec<(String, Vec<Uuid>)> = Vec::new();
+    for item in &plan.attributes {
+        if matches!(
+            item.disposition,
+            Disposition::KeyTaken | Disposition::Superseded
+        ) {
+            continue;
+        }
+        let (Some(note), Some(p)) = (item.attr.as_ref(), by_prop_iri.get(item.iri.as_str())) else {
+            continue;
+        };
+        let Some(dt) = attr_datatype(note) else {
+            continue;
+        };
+        // 计划阶段判为可解析、落库时却没有 id 的（类被跳过或更新失败）自然落选；
+        // 全落选就不建，而不是造一个挂空的属性
+        let domain_ids: Vec<Uuid> = p
+            .domains
+            .iter()
+            .filter_map(|iri| id_of.get(iri).copied())
+            .collect();
+        if domain_ids.is_empty() {
+            continue;
+        }
+        new_attrs.push(utopia_store::ontology::BulkRelation {
+            key: p.key.clone(),
+            label: p.label.clone(),
+            description: p.description.clone(),
+            iri: p.iri.clone(),
+            kind: "attribute",
+            datatype: Some(dt.to_string()),
+            // 属性不参与时态闭合，也不参与一致性检查：那几类判定都是关于
+            // **实体之间**的边,而属性的宾语是字面值
+            functional: false,
+            inverse_functional: false,
+            transitive: false,
+            symmetric: false,
+            asymmetric: false,
+            irreflexive: false,
+        });
+        pending_attr_domains.push((p.key.clone(), domain_ids));
+    }
+    let attr_ids =
+        utopia_store::ontology::create_relation_types_bulk(&state.pool, kb_id, &new_attrs).await?;
+    created_attrs += attr_ids.len();
+    let mut attr_links: Vec<(Uuid, Uuid)> = Vec::new();
+    for (key, domains) in &pending_attr_domains {
+        let Some(aid) = attr_ids.get(key) else {
+            continue;
+        };
+        attr_links.extend(domains.iter().map(|d| (*aid, *d)));
+    }
+    utopia_store::ontology::link_domains_ranges_bulk(&state.pool, &attr_links, &[]).await?;
+
+    let summary = serde_json::json!({
+        "classes_created": created_classes,
+        "classes_updated": updated_classes,
+        "classes_key_taken": plan.classes.iter().filter(|c| c.disposition == Disposition::KeyTaken).count(),
+        "relations_seen": plan.relations.len(),
+        // 连上了几条逆 / 父属性。**报出来**——目标 IRI 不在这个库里时会静默跳过
+        // （引用外部词汇表是常态），不给数就没人知道少连了多少
+        "inverse_linked": linked_inv,
+        "sub_property_linked": linked_sub,
+        "relations_created": created_rels,
+        // 词表自己让位的那些：不建，也不算冲突
+        "relations_superseded": plan.relations.iter().filter(|r| r.disposition == Disposition::Superseded).count(),
+        "relations_updated": updated_rels,
+        "attributes_seen": plan.attributes.len(),
+        "attributes_created": created_attrs,
+        "attributes_skipped": plan.attr_skips(),
+        "classes_without_description": plan.classes_without_description,
+        "functional_relations": plan.functional_relations,
+        "unprojected": plan.unprojected.iter().take(30).collect::<Vec<_>>(),
+        "triples": plan.triples,
+    });
+    let import_id = utopia_store::ontology::record_import(
+        &state.pool,
+        kb_id,
+        &sha,
+        filename,
+        &format!("{format:?}").to_lowercase(),
+        bytes.len() as i64,
+        &summary,
+        actor,
+    )
+    .await?;
+
+    let _ = utopia_store::audit::record(
+        &state.pool,
+        Some(kb_id),
+        actor,
+        "ontology.imported",
+        "kb",
+        Some(kb_id),
+        summary,
+    )
+    .await;
+    // 本体刚变过，向量都是陈的。**排任务而不是就地跑**：这一趟要嵌几千行，
+    // 放在导入请求里，用户点完确认要多等六到八分钟。排不上也不要紧——
+    // 索引是自愈的，下一个用到检索的人会补上
+    let _ = utopia_store::jobs::enqueue(
+        &state.pool,
+        "embed_ontology",
+        serde_json::json!({ "kb_id": kb_id }),
+    )
+    .await;
+
+    Ok((import_id, plan))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}

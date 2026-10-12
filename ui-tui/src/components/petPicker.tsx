@@ -2,7 +2,6 @@ import { Box, Text, useInput, useStdout } from '@hermes/ink'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { GatewayClient } from '../gatewayClient.js'
-import { useT } from '../i18n/useT.js'
 import { rpcErrorMessage } from '../lib/rpc.js'
 import type { Theme } from '../theme.js'
 
@@ -39,9 +38,6 @@ export function PetPicker({ gw, maxWidth, onClose, t }: PetPickerProps) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
-  const T = useT()
-  const P = T.pickers.pet
-  const C = T.pickers.common
 
   const { stdout } = useStdout()
   // Optional maxWidth lets grid layouts hand the picker its cell budget.
@@ -124,14 +120,14 @@ export function PetPicker({ gw, maxWidth, onClose, t }: PetPickerProps) {
   })
 
   if (loading) {
-    return <Text color={t.color.muted}>{P.loading}</Text>
+    return <Text color={t.color.muted}>loading pets…</Text>
   }
 
   if (err && !gallery) {
     return (
       <Box flexDirection="column" width={width}>
-        <Text color={t.color.label}>{C.error(err)}</Text>
-        <OverlayHint t={t}>{P.escCancelHint}</OverlayHint>
+        <Text color={t.color.label}>error: {err}</Text>
+        <OverlayHint t={t}>Esc cancel</OverlayHint>
       </Box>
     )
   }
@@ -141,23 +137,23 @@ export function PetPicker({ gw, maxWidth, onClose, t }: PetPickerProps) {
   return (
     <Box flexDirection="column" width={width}>
       <Text bold color={t.color.accent}>
-        {P.title}
+        Pets
       </Text>
 
       <Text color={t.color.muted} wrap="truncate-end">
-        {query ? C.filter(query) : C.typeToFilter} · {view.length === 1 ? P.petCountOne(1) : P.petCountOther(view.length)}
+        {query ? `filter: ${query}` : 'type to filter'} · {view.length} pet{view.length === 1 ? '' : 's'}
       </Text>
 
-      {offset > 0 && <Text color={t.color.muted}>{C.moreAbove(offset)}</Text>}
+      {offset > 0 && <Text color={t.color.muted}> ↑ {offset} more</Text>}
 
       {view.length === 0 ? (
-        <Text color={t.color.muted}>{query ? P.noMatches(query) : P.noneAvailable}</Text>
+        <Text color={t.color.muted}>{query ? `no pets match "${query}"` : 'no pets available'}</Text>
       ) : (
         items.map((pet, i) => {
           const at = offset + i === idx
           const isActive = enabled && pet.slug === active
           const mark = isActive ? '●' : pet.installed ? '✓' : ' '
-          const tag = pet.installed ? '' : pet.curated ? P.officialTag : ''
+          const tag = pet.installed ? '' : pet.curated ? ' · official' : ''
 
           return (
             <Text color={t.color.muted} {...chipRowProps(t, at)} key={pet.slug} wrap="truncate-end">
@@ -173,12 +169,12 @@ export function PetPicker({ gw, maxWidth, onClose, t }: PetPickerProps) {
         })
       )}
 
-      {offset + VISIBLE < view.length && <Text color={t.color.muted}>{C.moreBelow(view.length - offset - VISIBLE)}</Text>}
+      {offset + VISIBLE < view.length && <Text color={t.color.muted}> ↓ {view.length - offset - VISIBLE} more</Text>}
 
-      {err ? <Text color={t.color.label}>{C.error(err)}</Text> : null}
-      {busy ? <Text color={t.color.accent}>{P.adopting}</Text> : null}
+      {err ? <Text color={t.color.label}>error: {err}</Text> : null}
+      {busy ? <Text color={t.color.accent}>adopting…</Text> : null}
 
-      <OverlayHint t={t}>{P.hint}</OverlayHint>
+      <OverlayHint t={t}>↑/↓ select · Enter adopt · type to filter · Esc cancel</OverlayHint>
     </Box>
   )
 }

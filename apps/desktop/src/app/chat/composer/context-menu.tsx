@@ -47,7 +47,7 @@ export function ContextMenu({
   return (
     <>
       <DropdownMenu>
-        <Tip label={state.tools.label} placement="control">
+        <Tip label={state.tools.label} side="top">
           <DropdownMenuTrigger asChild>
             <Button
               aria-label={state.tools.label}
@@ -127,7 +127,7 @@ function PromptSnippetsDialog({ onInsertText, onOpenChange, open }: PromptSnippe
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md gap-3">
         <DialogHeader>
           <DialogTitle>{c.snippetsTitle}</DialogTitle>
           <DialogDescription>{c.snippetsDesc}</DialogDescription>

@@ -4,7 +4,10 @@ import { deriveRemoteAuthProviderShape } from './desktop-remote-auth'
 
 describe('deriveRemoteAuthProviderShape', () => {
   it('uses fallback copy when the gateway has not reported providers', () => {
-    expect(deriveRemoteAuthProviderShape(null).isPassword).toBe(false)
+    expect(deriveRemoteAuthProviderShape(null)).toEqual({
+      isPassword: false,
+      providerLabel: 'your identity provider'
+    })
     expect(deriveRemoteAuthProviderShape([], 'the configured gateway')).toEqual({
       isPassword: false,
       providerLabel: 'the configured gateway'

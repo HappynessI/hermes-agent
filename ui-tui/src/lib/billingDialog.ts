@@ -1,7 +1,5 @@
 import type { BillingBlock } from '@hermes/shared/billing'
 
-import { t } from '../i18n/runtime.js'
-
 export interface BillingDialogCopy {
   cancelLabel: string
   confirmLabel: string
@@ -20,19 +18,19 @@ export interface BillingDialogCopy {
 export function billingDialogCopy(block: BillingBlock): BillingDialogCopy {
   if (block.is_nous) {
     return {
-      cancelLabel: t('libText.billingDialog.dismiss'),
-      confirmLabel: t('libText.billingDialog.topUp'),
-      detail: t('libText.billingDialog.nousDetail'),
-      title: t('libText.billingDialog.nousTitle')
+      cancelLabel: 'Dismiss',
+      confirmLabel: 'Top up',
+      detail: 'Your Nous credit balance is exhausted — top up to keep going.',
+      title: 'Out of Nous credits'
     }
   }
 
-  const label = block.provider_label || t('libText.billingDialog.yourProvider')
+  const label = block.provider_label || 'your provider'
 
   return {
-    cancelLabel: t('libText.billingDialog.dismiss'),
-    confirmLabel: block.billing_url ? t('libText.billingDialog.openBillingPage') : t('libText.billingDialog.switchProvider'),
-    detail: t('libText.billingDialog.providerDetail', label),
-    title: t('libText.billingDialog.providerTitle', label)
+    cancelLabel: 'Dismiss',
+    confirmLabel: block.billing_url ? 'Open billing page' : 'Switch provider',
+    detail: `${label} reports your credits or billing are exhausted.`,
+    title: `Out of credits · ${label}`
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { fromItemValue, toItemValue, withActive } from './model-select'
+import { withActive } from './model-settings'
 
 // A Radix <Select> shows a blank trigger when its `value` matches no
 // <SelectItem>. `withActive` guarantees the controlled value is always
@@ -19,17 +19,13 @@ describe('withActive', () => {
   it('does not inject an empty active value', () => {
     expect(withActive(curated, '')).toEqual(curated)
   })
-})
 
-// The "Custom model…" action row shares the Radix value namespace with the
-// model rows. Any whitespace-free slug is a legal model id here, so a model
-// must round-trip and never decode as the action.
-describe('item values', () => {
-  it.each(['hermes-4', '__custom__', 'custom', 'model:', 'model:custom'])('round-trips %s as a model', slug => {
-    expect(fromItemValue(toItemValue(slug))).toBe(slug)
+  it('surfaces the active model even when the curated list is empty', () => {
+    expect(withActive([], 'anthropic/claude-opus-4.7')).toEqual(['anthropic/claude-opus-4.7'])
   })
 
-  it('keeps an empty selection empty so the trigger shows its placeholder', () => {
-    expect(toItemValue('')).toBe('')
+  it('keeps the active model selectable as the invariant', () => {
+    const out = withActive(curated, 'custom/model')
+    expect(out).toContain('custom/model')
   })
 })

@@ -6,7 +6,7 @@
  * backend, no core edits.
  *
  * Ships OFF by default (`defaultEnabled: false`): it inventories in
- * Capabilities ▸ Plugins and registers nothing until the user flips the switch.
+ * Settings ▸ Plugins and registers nothing until the user flips the switch.
  */
 
 import './kanban.css'
@@ -30,7 +30,7 @@ import {
   useValue
 } from '@hermes/plugin-sdk'
 
-import { $boardSlug, bindApi, boardKey, fetchBoard, useKanbanScope } from './api'
+import { $boardSlug, bindApi, boardKey, fetchBoard } from './api'
 import { KanbanBoardPage } from './board'
 import { KANBAN_LOCALES } from './i18n'
 import { $newTaskLane, useKanban } from './ui'
@@ -40,13 +40,12 @@ import { $newTaskLane, useKanban } from './ui'
 // the page); hidden when nothing is in flight (or unloaded).
 function KanbanCount() {
   const k = useKanban()
-  const scope = useKanbanScope()
   const slug = useValue($boardSlug)
 
   // Socket-invalidated like the page (same cache); slow socketless heartbeat.
   const { data: board } = useQuery({
     queryFn: () => fetchBoard(false),
-    queryKey: boardKey(scope, slug, false),
+    queryKey: boardKey(slug, false),
     refetchInterval: 60_000
   })
 
@@ -81,11 +80,10 @@ function KanbanCount() {
 const plugin: HermesPlugin = {
   id: 'kanban',
   name: 'Kanban',
-  description: 'Multi-agent task board — board page, sidebar entry, and a live in-flight count in the status bar.',
   defaultEnabled: false,
   register(ctx) {
     ctx.i18n.register(KANBAN_LOCALES)
-    ctx.onDispose(bindApi(ctx.rest, ctx.storage, ctx.socket, { os: ctx.os, t: ctx.i18n.t }))
+    ctx.onDispose(bindApi(ctx.rest, ctx.storage, ctx.socket))
 
     // The plugin command pattern: ONE action id (`kanban.newTask`) wired into
     // two areas — a keybind (dispatch + rebindable panel row) and a palette row
@@ -112,60 +110,50 @@ const plugin: HermesPlugin = {
         render: () => <KanbanBoardPage />
       },
       {
+        id: 'nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 50,
+        data: { codicon: 'project', label: 'Kanban', path: '/kanban' } satisfies SidebarNavContribution
+      },
+      {
         id: 'count',
         area: STATUSBAR_AREAS.right,
         order: 80,
         render: () => <KanbanCount />
+      },
+      {
+        id: 'open',
+        area: PALETTE_AREA,
+        data: {
+          id: 'kanban.open',
+          label: 'Kanban: Open board',
+          keywords: ['kanban', 'board', 'tasks', 'agents'],
+          run: () => host.navigate('/kanban')
+        } satisfies PaletteContribution
+      },
+      {
+        id: 'new-task',
+        area: PALETTE_AREA,
+        data: {
+          id: 'kanban.newTask',
+          action: 'kanban.newTask',
+          label: ctx.i18n.t('newTaskCommand'),
+          keywords: ['kanban', 'task', 'new', 'create', 'triage'],
+          run: newTask
+        } satisfies PaletteContribution
+      },
+      {
+        id: 'new-task',
+        area: KEYBINDS_AREA,
+        data: {
+          id: 'kanban.newTask',
+          category: 'view',
+          defaults: ['mod+alt+n'],
+          label: ctx.i18n.t('newTaskCommand'),
+          run: newTask
+        } satisfies KeybindContribution
       }
     ])
-
-    const registerLabels = () =>
-      ctx.registerMany([
-        {
-          id: 'nav',
-          area: SIDEBAR_NAV_AREA,
-          order: 50,
-          data: { codicon: 'project', label: ctx.i18n.t('nav'), path: '/kanban' } satisfies SidebarNavContribution
-        },
-        {
-          id: 'open',
-          area: PALETTE_AREA,
-          data: {
-            id: 'kanban.open',
-            label: ctx.i18n.t('openBoard'),
-            keywords: ['kanban', 'board', 'tasks', 'agents'],
-            run: () => host.navigate('/kanban')
-          } satisfies PaletteContribution
-        },
-        {
-          id: 'new-task',
-          area: PALETTE_AREA,
-          data: {
-            id: 'kanban.newTask',
-            action: 'kanban.newTask',
-            label: ctx.i18n.t('newTaskCommand'),
-            keywords: ['kanban', 'task', 'new', 'create', 'triage'],
-            run: newTask
-          } satisfies PaletteContribution
-        },
-        {
-          id: 'new-task',
-          area: KEYBINDS_AREA,
-          data: {
-            id: 'kanban.newTask',
-            category: 'view',
-            defaults: ['mod+alt+n'],
-            label: ctx.i18n.t('newTaskCommand'),
-            run: newTask
-          } satisfies KeybindContribution
-        }
-      ])
-
-    let disposeLabels = registerLabels()
-    ctx.i18n.onLocaleChange(() => {
-      disposeLabels()
-      disposeLabels = registerLabels()
-    })
   }
 }
 

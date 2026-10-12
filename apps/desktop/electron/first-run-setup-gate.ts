@@ -2,8 +2,6 @@ interface FirstRunSetupBackend {
   activeRoot?: string
   kind?: string
   platform?: string
-  /** What the local setup card represents: 'none' = installer offer, the rest = use existing. */
-  local?: 'none' | 'installed' | 'bundled'
 }
 
 interface FirstRunSetupGateOptions {

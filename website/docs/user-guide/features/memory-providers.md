@@ -1,12 +1,12 @@
 ---
 sidebar_position: 4
 title: "Memory Providers"
-description: "External memory provider plugins — Honcho, OpenViking, Mem0, Hindsight, Holographic, RetainDB, ByteRover, Supermemory"
+description: "External memory provider plugins — Honcho, OpenViking, Mem0, Hindsight, Holographic, RetainDB, ByteRover, Supermemory, TencentDB Agent Memory"
 ---
 
 # Memory Providers
 
-Hermes Agent ships with 7 external memory provider plugins that give the agent persistent, cross-session knowledge beyond the built-in MEMORY.md and USER.md, and more (such as Hindsight) are available from the [plugin catalog](./plugins.md). Only **one** external provider can be active at a time — the built-in memory is always active alongside it.
+Hermes Agent ships with 9 external memory provider plugins that give the agent persistent, cross-session knowledge beyond the built-in MEMORY.md and USER.md. Only **one** external provider can be active at a time — the built-in memory is always active alongside it.
 
 ## Quick Start
 
@@ -22,8 +22,7 @@ Or set manually in `~/.hermes/config.yaml`:
 
 ```yaml
 memory:
-  provider: openviking   # or honcho, mem0, holographic, retaindb, byterover, supermemory,
-                         # or hindsight (plugin catalog — run `hermes plugins install hindsight` first)
+  provider: openviking   # or honcho, mem0, hindsight, holographic, retaindb, byterover, supermemory, memory_tencentdb
 ```
 
 ## How It Works
@@ -48,7 +47,7 @@ AI-native cross-session user modeling with dialectic reasoning, session-scoped c
 | | |
 |---|---|
 | **Best for** | Multi-agent systems with cross-session context, user-agent alignment |
-| **Requires** | `hermes memory setup` prepares the Honcho SDK through PM; [API key](https://app.honcho.dev) or self-hosted instance |
+| **Requires** | `pip install honcho-ai` + [API key](https://app.honcho.dev) or self-hosted instance |
 | **Data storage** | Honcho Cloud or self-hosted |
 | **Cost** | Honcho pricing (cloud) / free (self-hosted) |
 
@@ -316,6 +315,7 @@ OPENVIKING_ENDPOINT=http://127.0.0.1:1933
 # OPENVIKING_API_KEY=...
 # OPENVIKING_ACCOUNT=default
 # OPENVIKING_USER=default
+# OPENVIKING_AGENT=hermes
 ```
 
 OpenViking server settings live in `ov.conf` (`--config`,
@@ -323,36 +323,13 @@ OpenViking server settings live in `ov.conf` (`--config`,
 live in `ovcli.conf` (`OPENVIKING_CLI_CONFIG_FILE` or
 `~/.openviking/ovcli.conf`).
 
-When the endpoint is local and nothing is listening, Hermes starts
-`openviking-server` in the background. That server gets your model-provider
-keys (for its embedding and VLM models), your `HOME` and
-`OPENVIKING_CONFIG_FILE`, but never bot, gateway or relay tokens, and not
-Hermes's `PYTHONPATH`. Put anything else the server needs in `ov.conf`.
-
 **Key features:**
 - Tiered context loading: L0 (~100 tokens) → L1 (~2k) → L2 (full)
 - Automatic memory extraction on session commit (profile, preferences, entities, events, cases, patterns)
 - `viking://` URI scheme for hierarchical knowledge browsing
 
 `OPENVIKING_ACCOUNT` and `OPENVIKING_USER` are used for local/trusted mode.
-Peer identity is optional. By default, Hermes sends no peer ID and writes
-explicit memories to `viking://user/<user>/memories/...`. Setup does not ask
-for a peer ID. For separate assistant context, set
-`memory.openviking.agent: work-assistant` in `config.yaml`.
-
-Existing non-empty peer settings keep their peer-scoped writes and recall.
-This includes `OPENVIKING_AGENT` and `actor_peer_id` or legacy `agent_id` in a
-linked OpenViking config. Existing memories are not moved or deleted.
-With no peer ID, default search covers user memory and existing peer memories
-under the same OpenViking user. Old peer memories remain searchable at their
-existing paths. Ranking and result limits determine which memories are returned.
-Set `memory.openviking.agent: hermes` to restore the old peer-scoped writes.
-Memories written at user scope before this change stay there and remain
-searchable. The setting changes future writes, not existing memory locations.
-
-Hermes sends `User-Agent: openviking-memory-hermes/<version>` on OpenViking
-requests. This standard harness identifier contains no per-user identifier and
-does not add a separate request.
+`OPENVIKING_AGENT` is Hermes' peer ID in OpenViking for peer-scoped memories.
 
 ---
 
@@ -363,13 +340,9 @@ Server-side LLM fact extraction with semantic search, reranking, and automatic d
 | | |
 |---|---|
 | **Best for** | Hands-off memory management — Mem0 handles extraction automatically |
-| **Requires** | `hermes memory setup` prepares the Mem0 SDK through PM; API key (platform), a running Mem0 server (self-hosted dashboard), or an LLM + vector store (OSS) |
+| **Requires** | `pip install mem0ai` + API key (platform), a running Mem0 server (self-hosted dashboard), or an LLM + vector store (OSS) |
 | **Data storage** | Mem0 Cloud (platform), your own Mem0 server (self-hosted dashboard), or in-process (OSS) |
 | **Cost** | Mem0 pricing (platform) / free (self-hosted or OSS) |
-
-The `mem0` SDK extra is excluded on native Windows ARM64. An external Mem0
-server over HTTP is a separate mode; a remote service does not imply that the
-in-process SDK runs on that target.
 
 **Tools (4):** `mem0_search` (semantic search; optional reranking in platform mode, off by default), `mem0_add` (store verbatim facts), `mem0_update` (update by ID), `mem0_delete` (delete by ID)
 
@@ -425,7 +398,6 @@ The plugin authenticates with `X-API-Key` and uses the server's `/search` / `/me
 | `user_id` | `hermes-user` | User identifier |
 | `agent_id` | `hermes` | Agent identifier |
 | `rerank` | `false` | Rerank search results for relevance (platform mode only) |
-| `sync_max_chars` | `450` | Per-message character cap applied before each turn is sent for fact extraction, cut at the last sentence boundary. The default fits 512-token embedders (Ollama `bge-small-zh-v1.5`, `all-minilm`); raise it (e.g. `6000`) for 8k-token embedders such as `text-embedding-3-small`, `jina-embeddings-v3` or `bge-m3` |
 
 **OSS supported providers:**
 
@@ -441,31 +413,26 @@ The plugin authenticates with `X-API-Key` and uses the server's `/search` / `/me
 
 ### Hindsight
 
-:::info Plugin catalog
-Hindsight is maintained by [vectorize-io](https://github.com/vectorize-io/hindsight) and installed from the [plugin catalog](./plugins.md) rather than bundled with Hermes. Setup details live in the upstream docs: [hindsight.vectorize.io/sdks/integrations/hermes](https://hindsight.vectorize.io/sdks/integrations/hermes).
-:::
-
 Long-term memory with knowledge graph, entity resolution, and multi-strategy retrieval. The `hindsight_reflect` tool provides cross-memory synthesis that no other provider offers. Automatically retains full conversation turns (including tool calls) with session-level document tracking.
 
 | | |
 |---|---|
 | **Best for** | Knowledge graph-based recall with entity relationships |
-| **Requires** | `hermes plugins install hindsight`. Cloud: API key from [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io). Local: LLM API key (OpenAI, Groq, OpenRouter, etc.) |
-| **Data storage** | Hindsight Cloud, local embedded PostgreSQL, or an external local Hindsight server |
+| **Requires** | Cloud: API key from [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io). Local: LLM API key (OpenAI, Groq, OpenRouter, etc.) |
+| **Data storage** | Hindsight Cloud or local embedded PostgreSQL |
 | **Cost** | Hindsight pricing (cloud) or free (local) |
 
 **Tools:** `hindsight_retain` (store with entity extraction), `hindsight_recall` (multi-strategy search), `hindsight_reflect` (cross-memory synthesis)
 
 **Setup:**
 ```bash
-hermes plugins install hindsight   # from the plugin catalog
-hermes memory setup                # select "hindsight"
+hermes memory setup    # select "hindsight"
 # Or manually:
 hermes config set memory.provider hindsight
 echo "HINDSIGHT_API_KEY=your-key" >> ~/.hermes/.env
 ```
 
-The plugin lands in `~/.hermes/plugins/hindsight/` (per profile home) and is enabled under `plugins.enabled` in `config.yaml`. `hermes memory setup`, `hermes memory status`, `hermes plugins list` and the dashboard Memory settings all work with the catalog-installed plugin. In local embedded mode the plugin installs `hindsight-all` on first use through Hermes' lazy-install path, which honours `security.allow_lazy_installs`.
+The setup wizard installs dependencies automatically and only installs what's needed for the selected mode (`hindsight-client` for cloud, `hindsight-all` for local). Requires `hindsight-client >= 0.4.22` (auto-upgraded on session start if outdated).
 
 **Local mode UI:** `hindsight-embed -p hermes ui start`
 
@@ -473,7 +440,7 @@ The plugin lands in `~/.hermes/plugins/hindsight/` (per profile home) and is ena
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `mode` | `cloud` | `cloud`, `local_embedded`, or `local_external` |
+| `mode` | `cloud` | `cloud` or `local` |
 | `bank_id` | `hermes` | Memory bank identifier |
 | `recall_budget` | `mid` | Recall thoroughness: `low` / `mid` / `high` |
 | `memory_mode` | `hybrid` | `hybrid` (context + tools), `context` (auto-inject only), `tools` (tools only) |
@@ -487,17 +454,7 @@ The plugin lands in `~/.hermes/plugins/hindsight/` (per profile home) and is ena
 | `retain_assistant_prefix` | `Assistant` | Label used before assistant turns in auto-retained transcripts |
 | `recall_tags` | — | Tags to filter on recall |
 
-See the [upstream Hermes integration docs](https://hindsight.vectorize.io/sdks/integrations/hermes) for the full configuration reference.
-
-#### Migrating from bundled Hindsight
-
-Hindsight used to ship inside the Hermes tree (and as the `hermes-agent[hindsight]` pip extra). If your `config.yaml` already has `memory.provider: hindsight`, there is nothing to do for most users:
-
-- `hermes update` installs the catalog plugin into every profile home that names the provider (this runs even when `security.allow_lazy_installs` is `false`).
-- If the plugin is still missing on the first agent start (`hermes chat`, the gateway, …), Hermes installs it and prints `✓ Memory provider 'hindsight' moved out of core — installed its plugin from the catalog (your memory.hindsight settings and data are unchanged).`
-- With `security.allow_lazy_installs: false`, the agent-start path instead logs one line — ``Memory provider 'hindsight' is not installed; security.allow_lazy_installs is off — run `hermes plugins install hindsight`.`` — and you run `hermes plugins install hindsight` yourself.
-
-What changes on disk: the plugin appears in `~/.hermes/plugins/hindsight/` and `config.yaml` gains `plugins.enabled: [hindsight]`. `memory.provider`, `memory.hindsight.*`, `$HERMES_HOME/hindsight/config.json`, `HINDSIGHT_API_KEY` in `.env` and your memory bank data are untouched. Verify with `hermes memory status` (provider active) and `hermes plugins list` (plugin installed and enabled).
+See [plugin README](https://github.com/NousResearch/hermes-agent/blob/main/plugins/memory/hindsight/README.md) for the full configuration reference.
 
 ---
 
@@ -593,12 +550,12 @@ hermes config set memory.provider byterover
 
 ### Supermemory
 
-Semantic long-term memory with profile recall, semantic search, explicit memory tools, and per-turn conversation capture (one document per session per 4-hour window).
+Semantic long-term memory with profile recall, semantic search, explicit memory tools, and session-end conversation ingest via the Supermemory graph API.
 
 | | |
 |---|---|
 | **Best for** | Semantic recall with user profiling and session-level graph building |
-| **Requires** | `hermes memory setup` prepares the Supermemory SDK through PM; [cloud API key](http://app.supermemory.ai/integrations?connect=hermes), or a [self-hosted server](https://supermemory.ai/docs/self-hosting/overview) |
+| **Requires** | `pip install supermemory` + [cloud API key](http://app.supermemory.ai/integrations?connect=hermes), or a [self-hosted server](https://supermemory.ai/docs/self-hosting/overview) |
 | **Data storage** | Supermemory Cloud or self-hosted |
 | **Cost** | Supermemory pricing (cloud) / free (self-hosted) |
 
@@ -643,17 +600,17 @@ stays local.
 | `profile_frequency` | `50` | Include profile facts on first turn and every N turns |
 | `capture_mode` | `all` | Skip tiny or trivial turns by default |
 | `search_mode` | `hybrid` | Search mode: `hybrid`, `memories`, or `documents` |
-| `api_timeout` | `5.0` | Timeout for SDK requests |
+| `api_timeout` | `5.0` | Timeout for SDK and ingest requests |
 
 **Environment variables:** `SUPERMEMORY_API_KEY` (required), `SUPERMEMORY_BASE_URL` (compatibility fallback when `base_url` is not configured), `SUPERMEMORY_CONTAINER_TAG` (overrides config).
 
-Base URL precedence is `supermemory.json` → `SUPERMEMORY_BASE_URL` → `https://api.supermemory.ai`. SDK operations and setup/status probes all use the resolved endpoint.
+Base URL precedence is `supermemory.json` → `SUPERMEMORY_BASE_URL` → `https://api.supermemory.ai`. SDK operations, setup/status probes, and conversation ingest all use the resolved endpoint.
 
 **Key features:**
 - Automatic context fencing — strips recalled memories from captured turns to prevent recursive memory pollution
-- Per-turn capture — each completed turn is written as it happens, one document per session per 4-hour window
-- Failed turn writes are retried (at-least-once) on the next turn, session end, `/reset`, or shutdown
-- End-to-end self-hosted routing — SDK and probe requests use the same configured endpoint
+- Full-session ingest — the entire conversation is sent once at session boundaries
+- Session-end conversation ingest (to `/v4/conversations`) for richer profile + graph building in Supermemory
+- End-to-end self-hosted routing — SDK, probe, and conversation-ingest requests use the same configured endpoint
 - Profile facts injected on first turn and at configurable intervals
 - **Profile-scoped containers** — use `{identity}` in `container_tag` (e.g. `hermes-{identity}` → `hermes-coder`) to isolate memories per Hermes profile
 - **Multi-container mode** — enable `enable_custom_container_tags` with a `custom_containers` list to let the agent read/write across named containers. Automatic operations stay on the primary container.
@@ -674,6 +631,88 @@ Base URL precedence is `supermemory.json` → `SUPERMEMORY_BASE_URL` → `https:
 
 **Support:** [Discord](https://supermemory.link/discord) · [support@supermemory.com](mailto:support@supermemory.com)
 
+---
+
+### TencentDB Agent Memory
+
+Four-layer, self-hosted memory through the official
+[TencentDB Agent Memory](https://github.com/Tencent/TencentDB-Agent-Memory)
+Gateway. Hermes is the lifecycle adapter; the Gateway owns extraction,
+retrieval, scheduling, and storage.
+
+| | |
+|---|---|
+| **Best for** | Local-first structured memory with explicit tenant and session isolation |
+| **Requires** | The official Node.js Gateway (Node.js 22.16 or newer) |
+| **Data storage** | Local SQLite/sqlite-vec by default, optional Tencent VectorDB |
+| **Cost** | Free/self-hosted; model and optional cloud database costs are separate |
+
+TencentDB Agent Memory separates its artifacts into four native layers:
+
+- **L0** conversation evidence written after completed Hermes turns
+- **L1** atomic/episodic memories extracted asynchronously by the Gateway
+- **L2** scenario Markdown files
+- **L3** synthesized user core/persona
+
+**Tools:** `memory_tencentdb_memory_search` (L1 search),
+`memory_tencentdb_conversation_search` (L0 search),
+`memory_tencentdb_remember` (durable L0 submission),
+`memory_tencentdb_update` and `memory_tencentdb_forget` (exact L1 mutation),
+`memory_tencentdb_read_scene` (L2), and `memory_tencentdb_profile` (L3).
+
+Prepare the official Gateway separately:
+
+```bash
+git clone https://github.com/Tencent/TencentDB-Agent-Memory.git
+cd TencentDB-Agent-Memory/MemoryCore
+pnpm install
+pnpm exec tsx src/gateway/server.ts
+```
+
+Then activate the Hermes adapter:
+
+```bash
+hermes config set memory.provider memory_tencentdb
+hermes memory setup
+```
+
+Non-secret settings are profile-scoped in
+`$HERMES_HOME/memory_tencentdb.json`. A minimal configuration for an
+externally managed Gateway is:
+
+```json
+{
+  "endpoint": "http://127.0.0.1:8420",
+  "auto_start": false,
+  "service_id": "default"
+}
+```
+
+The optional Gateway Bearer token belongs in `$HERMES_HOME/.env` as
+`MEMORY_TENCENTDB_GATEWAY_API_KEY`. When Hermes supervises a local Gateway,
+its LLM secret can be supplied as `TDAI_LLM_API_KEY`. A configured
+`gateway_cmd` enables sidecar supervision; an externally started Gateway is
+never stopped by Hermes.
+
+Hermes maps `workspace → team_id`, active profile → `agent_id`, platform user
+→ `user_id`, the current conversation → `session_id`, and an available provider
+task scope → `task_id`. L1 recall omits the
+session filter intentionally, allowing a new session to recall durable memory
+from earlier sessions while keeping the team/agent/user/task boundary.
+
+Scope differs by native layer: L0 keeps session/task scope, L1 aggregates across
+sessions within team/agent/user/task, and upstream L2/L3 intentionally aggregate at
+team/agent level across users. Use distinct `team_id` values when L2/L3 must
+not be shared between users.
+
+On a Hermes session boundary, the adapter drains L0 writes and calls the
+Gateway's scoped `POST /session/end` flush before rebinding to the next session.
+It does not restart the Gateway or disturb concurrent sessions.
+
+See the [provider README](https://github.com/NousResearch/hermes-agent/tree/main/plugins/memory/memory_tencentdb)
+for every config field, lifecycle behavior, offline smoke test, and the exact
+upstream boundary.
+
 ### Memori
 
 Structured long-term memory using Memori Cloud, with background completed-turn capture, tool-aware turn context, and explicit recall tools for facts, summaries, quota, signup, and feedback.
@@ -681,32 +720,19 @@ Structured long-term memory using Memori Cloud, with background completed-turn c
 | | |
 |---|---|
 | **Best for** | Agent-controlled recall with structured project and session attribution |
-| **Requires** | Externally supplied `hermes-memori` CLI and provider integration + [Memori API key](https://app.memorilabs.ai/signup) |
+| **Requires** | `pip install hermes-memori` + `hermes-memori install` + [Memori API key](https://app.memorilabs.ai/signup) |
 | **Data storage** | Memori Cloud |
 | **Cost** | Memori pricing |
 
 **Tools:** `memori_recall` (search long-term memory), `memori_recall_summary` (summarized context), `memori_quota` (usage/quota), `memori_signup` (request signup email), `memori_feedback` (send integration feedback)
 
 **Setup:**
-
-`hermes-memori` is an external integration, not a managed PM tool name. Follow
-its publisher's instructions to install the CLI in an independent environment.
-Before running its installer, confirm that it targets the intended Hermes home
-and supplies a provider with declared Python dependencies. Do not let an external
-installer pip-install into Hermes's selected environment. CLI availability alone
-does not make the Python provider available inside Hermes; an entry-point-only
-distribution needs an owner-managed build that includes it.
-
 ```bash
-# Run only after confirming the external installer's integration contract above.
+pip install hermes-memori
 hermes-memori install
 hermes config set memory.provider memori
 hermes memory setup
 ```
-
-If the installer does not support PM-managed directory-provider admission, ask
-the publisher for that integration rather than inventing a `hermes pm install`
-package command. Restart Hermes after successful dependency preparation.
 
 ---
 
@@ -717,33 +743,24 @@ package command. Restart Hermes after successful dependency preparation.
 | **Honcho** | Cloud | Paid | 5 | `honcho-ai` | Dialectic user modeling + session-scoped context |
 | **OpenViking** | Self-hosted | Free | 6 | `openviking` + server | Filesystem hierarchy + tiered loading |
 | **Mem0** | Cloud/Self-hosted | Free/Paid | 4 | `mem0ai` | Server-side LLM extraction + self-hosted/OSS modes |
-| **Hindsight** (plugin catalog) | Cloud/Local | Free/Paid | 3 | `hermes plugins install hindsight` | Knowledge graph + reflect synthesis |
+| **Hindsight** | Cloud/Local | Free/Paid | 3 | `hindsight-client` | Knowledge graph + reflect synthesis |
 | **Holographic** | Local | Free | 2 | None | HRR algebra + trust scoring |
 | **RetainDB** | Cloud | $20/mo | 10 | `requests` | Delta compression |
 | **ByteRover** | Local/Cloud | Free/Paid | 3 | `brv` CLI | Pre-compression extraction |
 | **Supermemory** | Cloud/Self-hosted | Free/Paid | 4 | `supermemory` | Context fencing + session graph ingest + multi-container |
+| **TencentDB Agent Memory** | Self-hosted/Cloud backend | Free/Usage-based | 7 | Node.js Gateway | Native L0–L3 pipeline + strict tenant isolation |
 | **Memori** | Cloud | Free/Paid | 5 | `hermes-memori` | Tool-aware memory + structured recall |
 
 ## Profile Isolation
 
-Each provider's data is isolated per [profile](../profiles.md):
+Each provider's data is isolated per [profile](/user-guide/profiles):
 
 - **Local storage providers** (Holographic, ByteRover) use `$HERMES_HOME/` paths which differ per profile
-- **Config file providers** (Honcho, Mem0, Hindsight, Supermemory) store config in `$HERMES_HOME/` so each profile has its own credentials
+- **Config file providers** (Honcho, Mem0, Hindsight, Supermemory, TencentDB Agent Memory) store non-secret config in `$HERMES_HOME/` so each profile has its own settings
 - **Cloud providers** (RetainDB) auto-derive profile-scoped project names
 - **Env var providers** (OpenViking) are configured via each profile's `.env` file
-
-## Providers Moving to the Plugin Catalog
-
-Memory providers are moving out of the Hermes tree into their maintainers' own repositories,
-published through the [plugin catalog](./plugins.md) — Hindsight is the first (see
-[Migrating from bundled Hindsight](#migrating-from-bundled-hindsight)). Nothing changes for you: the
-provider name, your `memory.<name>` settings, its data directory and its tools stay the same.
-When a provider you have configured stops shipping with Hermes, `hermes update` installs its
-catalog plugin for every profile that names it; if you update through the Desktop app, the
-agent does the same the first time it starts (unless `security.allow_lazy_installs` is
-`false`, in which case it logs the `hermes plugins install <name>` one-liner instead).
+- **Tenant-scoped providers** (TencentDB Agent Memory) also send workspace, profile, user, and session identifiers on every Gateway operation
 
 ## Building a Memory Provider
 
-See the [Developer Guide: Memory Provider Plugins](../../developer-guide/memory-provider-plugin.md) for how to create your own.
+See the [Developer Guide: Memory Provider Plugins](/developer-guide/memory-provider-plugin) for how to create your own.

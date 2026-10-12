@@ -1,12 +1,12 @@
 ---
-title: "Slime — RL post-training for LLMs with Megatron and SGLang"
-sidebar_label: "Slime"
+title: "Slime Rl Training — RL post-training for LLMs with Megatron and SGLang"
+sidebar_label: "Slime Rl Training"
 description: "RL post-training for LLMs with Megatron and SGLang"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# Slime
+# Slime Rl Training
 
 RL post-training for LLMs with Megatron and SGLang.
 

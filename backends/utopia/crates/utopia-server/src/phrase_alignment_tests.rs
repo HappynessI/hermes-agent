@@ -1,0 +1,1189 @@
+//! 一条短语判定的生命周期（0053，#807，#795）：候选经继承命中、父边增删让判定过期、
+//! 无候选与超限各自落库、端点类换了旧行不再循环、请求途中的编辑留下可见的过期、
+//! 人的判定不被覆盖。模型是脚本化的 HTTP 端点，库是真的 PostgreSQL。
+use super::*;
+use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
+use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
+use utopia_store::{materialize, phrase_bindings};
+
+#[derive(Clone)]
+struct Model {
+    replies: Arc<Mutex<Vec<Value>>>,
+    requests: Arc<Mutex<Vec<Value>>>,
+    hold: Arc<std::sync::atomic::AtomicBool>,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+async fn reply(State(m): State<Model>, Json(body): Json<Value>) -> impl IntoResponse {
+    let n = {
+        let mut seen = m.requests.lock().unwrap();
+        seen.push(body);
+        seen.len() - 1
+    };
+    if n == 0 && m.hold.load(std::sync::atomic::Ordering::SeqCst) {
+        m.entered.notify_one();
+        m.release.notified().await;
+    }
+    let text = {
+        let mut replies = m.replies.lock().unwrap();
+        if replies.is_empty() {
+            panic!("unexpected model request #{n}");
+        }
+        replies.remove(0).to_string()
+    };
+    let frame = json!({"choices":[{"delta":{"content":text}}]});
+    (
+        [("content-type", "text/event-stream")],
+        format!("data: {frame}\n\ndata: [DONE]\n\n"),
+    )
+}
+
+/// 脚本化的嵌入端点：每段文字一个由字节算出的四维向量。只要求确定、条数对得上——
+/// 这里测的是「向量有没有」，不是近不近
+async fn embed(Json(body): Json<Value>) -> impl IntoResponse {
+    let data: Vec<Value> = body["input"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|t| {
+            let bytes = t.as_str().unwrap_or("").as_bytes();
+            let v: Vec<f32> = (0..4)
+                .map(|i| {
+                    bytes
+                        .iter()
+                        .skip(i)
+                        .step_by(4)
+                        .map(|b| *b as f32)
+                        .sum::<f32>()
+                        / 255.0
+                })
+                .collect();
+            json!({ "embedding": v })
+        })
+        .collect();
+    Json(json!({ "data": data }))
+}
+
+struct Fx {
+    pool: sqlx::PgPool,
+    state: AppState,
+    org: Uuid,
+    ws: Uuid,
+    kb: Uuid,
+    legal_entity: Uuid,
+    organization: Uuid,
+    place: Uuid,
+    acme: Uuid,
+    based_in: Uuid,
+    model: Model,
+    server: tokio::task::JoinHandle<()>,
+    dir: tempfile::TempDir,
+}
+
+impl Fx {
+    /// 一个库：legal_entity ⊃ organization，place；属性 based_in 声明在 legal_entity → place；
+    /// Acme（organization）—based in→ London（place）一条开放陈述
+    async fn new() -> anyhow::Result<Option<Self>> {
+        let Some(url) = utopia_store::test_db::url() else {
+            return Ok(None);
+        };
+        let pool = sqlx::PgPool::connect(&url).await?;
+        utopia_store::db::migrate(&pool).await?;
+        let (org, ws, kb, legal_entity, organization, place, acme, london, based_in, statement) = (
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+        );
+        sqlx::raw_sql(&format!(
+            "INSERT INTO organizations(id,name) VALUES ('{org}','phrase-lifecycle');
+             INSERT INTO workspaces(id,org_id,name) VALUES ('{ws}','{org}','phrase-lifecycle');
+             INSERT INTO knowledge_bases(id,workspace_id,name) VALUES ('{kb}','{ws}','phrase-lifecycle');
+             INSERT INTO entity_types(id,kb_id,key,label,color,shape) VALUES
+                 ('{legal_entity}','{kb}','legal_entity','Legal entity','#000','circle'),
+                 ('{organization}','{kb}','organization','Organization','#000','circle'),
+                 ('{place}','{kb}','place','Place','#000','circle');
+             INSERT INTO entity_type_parents(child_id,parent_id,is_primary) VALUES
+                 ('{organization}','{legal_entity}',true);
+             INSERT INTO relation_types(id,kb_id,key,label,kind,temporal,description) VALUES
+                 ('{based_in}','{kb}','based_in','based in','relation','state','where an entity is based');
+             INSERT INTO relation_type_domains(relation_type_id,entity_type_id) VALUES ('{based_in}','{legal_entity}');
+             INSERT INTO relation_type_ranges(relation_type_id,entity_type_id) VALUES ('{based_in}','{place}');
+             INSERT INTO entities(id,kb_id,canonical_name,type_id) VALUES
+                 ('{acme}','{kb}','Acme','{organization}'), ('{london}','{kb}','London','{place}');
+             INSERT INTO facts(id,kb_id,subject_id,object_id,layer,phrase) VALUES
+                 ('{statement}','{kb}','{acme}','{london}','open','based in');"
+        ))
+        .execute(&pool)
+        .await?;
+        let model = Model {
+            replies: Arc::new(Mutex::new(Vec::new())),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            hold: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            entered: Arc::new(tokio::sync::Notify::new()),
+            release: Arc::new(tokio::sync::Notify::new()),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = format!("http://{}", listener.local_addr()?);
+        let router = Router::new()
+            .route("/chat/completions", post(reply))
+            .route("/embeddings", post(embed))
+            .with_state(model.clone());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        utopia_store::settings::upsert(
+            &pool,
+            ws,
+            Some(&endpoint),
+            None,
+            Some("scripted"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+        let dir = tempfile::tempdir()?;
+        let cfg = utopia_core::config::AppConfig {
+            data_dir: dir.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let search = Arc::new(utopia_search::SearchIndex::open(
+            &dir.path().join("search"),
+        )?);
+        let state = AppState::new(pool.clone(), &cfg, search, "test-only".into());
+        Ok(Some(Self {
+            pool,
+            state,
+            org,
+            ws,
+            kb,
+            legal_entity,
+            organization,
+            place,
+            acme,
+            based_in,
+            model,
+            server,
+            dir,
+        }))
+    }
+    fn script(&self, replies: Vec<Value>) {
+        *self.model.replies.lock().unwrap() = replies;
+    }
+    /// 给工作区配上嵌入模型（同一个脚本化端点）。缺省不配：多数场景测的是结构候选，
+    /// 配了嵌入会让本体向量补齐与短名单掺进来
+    async fn enable_embeddings(&self) -> anyhow::Result<()> {
+        let settings = utopia_store::settings::get(&self.pool, self.ws)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("fixture settings missing"))?;
+        let endpoint = settings.chat_base_url.clone();
+        utopia_store::settings::upsert(
+            &self.pool,
+            self.ws,
+            endpoint.as_deref(),
+            None,
+            Some("scripted"),
+            endpoint.as_deref(),
+            None,
+            Some("scripted-embed"),
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+    /// 这个库的一个编辑：走 API 处理函数要有人
+    async fn editor(&self) -> anyhow::Result<utopia_core::models::User> {
+        let id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO users(id,org_id,email,password_hash,display_name) VALUES($1,$2,$3,'x','Editor')",
+        )
+        .bind(id)
+        .bind(self.org)
+        .bind(format!("editor-{id}@example.test"))
+        .execute(&self.pool)
+        .await?;
+        sqlx::query("INSERT INTO kb_members(kb_id,user_id,role) VALUES($1,$2,'editor')")
+            .bind(self.kb)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(utopia_core::models::User {
+            id,
+            org_id: self.org,
+            email: format!("editor-{id}@example.test"),
+            password_hash: "x".into(),
+            display_name: "Editor".into(),
+            is_admin: false,
+            created_at: chrono::Utc::now(),
+        })
+    }
+    /// 这个库排着的任务，按先后
+    async fn queued(&self) -> anyhow::Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT kind FROM jobs WHERE status='queued' AND payload->>'kb_id'=$1 ORDER BY run_at, id",
+        )
+        .bind(self.kb.to_string())
+        .fetch_all(&self.pool)
+        .await?)
+    }
+    /// 一条关系/属性有没有向量，以及嵌的是哪段字
+    async fn vector_of(&self, id: Uuid) -> anyhow::Result<(bool, Option<String>)> {
+        Ok(sqlx::query_as(
+            "SELECT embedding IS NOT NULL, embedded_text FROM relation_types WHERE id=$1",
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+    async fn run(&self) -> anyhow::Result<()> {
+        align_phrases_reasking(&self.state, self.kb, 0).await
+    }
+    fn requests(&self) -> Vec<Value> {
+        self.model.requests.lock().unwrap().clone()
+    }
+    fn prompt_of(&self, n: usize) -> String {
+        self.requests()[n]["messages"][1]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+    async fn binding(&self) -> anyhow::Result<phrase_bindings::Binding> {
+        let mut all = phrase_bindings::bindings(&self.pool, self.kb).await?;
+        anyhow::ensure!(!all.is_empty(), "no binding");
+        Ok(all.remove(0))
+    }
+    /// 这条签名落库时记的原因（`votes.reason`）：结构性结果不问模型，原因写在票里
+    async fn reason(&self) -> anyhow::Result<Option<String>> {
+        Ok(sqlx::query_scalar("SELECT votes->>'reason' FROM phrase_bindings WHERE kb_id=$1 ORDER BY decided_at DESC LIMIT 1")
+            .bind(self.kb)
+            .fetch_one(&self.pool)
+            .await?)
+    }
+    async fn typed(&self) -> anyhow::Result<i64> {
+        Ok(materialize::count(&self.pool, self.kb).await?)
+    }
+    /// 这一轮结束后有没有再排一次对齐：收敛的判据
+    async fn requeued(&self) -> anyhow::Result<bool> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM jobs WHERE kind='align_phrases' AND status='queued' AND payload->>'kb_id'=$1",
+        )
+        .bind(self.kb.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n > 0)
+    }
+    async fn clear_jobs(&self) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM jobs WHERE payload->>'kb_id'=$1")
+            .bind(self.kb.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+    async fn cleanup(self) -> anyhow::Result<()> {
+        self.server.abort();
+        self.clear_jobs().await?;
+        sqlx::query("DELETE FROM organizations WHERE id=$1")
+            .bind(self.org)
+            .execute(&self.pool)
+            .await?;
+        drop(self.state);
+        self.dir.close()?;
+        Ok(())
+    }
+}
+
+fn vote(key: Option<&str>, dir: Option<&str>) -> Value {
+    marked(key, dir, key.map(|_| "none"))
+}
+/// 一票带第四格：based_in 是状态，绑上它的票要说只带一个日期的陈述那个日期标什么（#966）。
+/// 夹具里的陈述没有日期，平常答 none
+fn marked(key: Option<&str>, dir: Option<&str>, marks: Option<&str>) -> Value {
+    json!({"b":[[0, key, dir, marks]]})
+}
+/// 两票之后对齐还会问一次「这种形状还蕴含什么」（0044 决定 3 第五片）：脚本里答「没有」
+fn nothing_implied() -> Value {
+    json!({"i":[[0,null,null]]})
+}
+fn bound() -> Vec<Value> {
+    vec![
+        vote(Some("based_in"), Some("forward")),
+        vote(Some("based_in"), Some("forward")),
+        nothing_implied(),
+    ]
+}
+fn none() -> Vec<Value> {
+    vec![vote(None, None)]
+}
+
+/// 类别词对齐还排着时短语对齐不动手：两端的类还没定，判了也是重判。它给自己排一份半分钟
+/// 后的，类别词对齐收尾后照常判
+#[tokio::test]
+async fn phrase_alignment_waits_while_a_kind_word_round_is_pending() -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.script(bound());
+        sqlx::query("INSERT INTO jobs (kind, payload) VALUES ('align_types', $1)")
+            .bind(json!({ "kb_id": f.kb }))
+            .execute(&f.pool)
+            .await?;
+        f.run().await?;
+        assert_eq!(
+            f.requests().len(),
+            0,
+            "nothing is asked while kind words are still being decided"
+        );
+        let deferred: Vec<(String, bool)> = sqlx::query_as(
+            "SELECT status, run_at > now() FROM jobs
+             WHERE kind='align_phrases' AND payload->>'kb_id'=$1",
+        )
+        .bind(f.kb.to_string())
+        .fetch_all(&f.pool)
+        .await?;
+        assert_eq!(
+            deferred,
+            vec![("queued".to_string(), true)],
+            "one phrase round is queued for later"
+        );
+        f.run().await?;
+        assert_eq!(
+            f.requests().len(),
+            0,
+            "still waiting: the kind-word job is still queued"
+        );
+        f.clear_jobs().await?;
+        f.run().await?;
+        assert_eq!(
+            f.requests().len(),
+            2,
+            "the kind-word round gone, the two votes are asked"
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+#[tokio::test]
+async fn a_property_declared_on_an_ancestor_is_offered_with_its_basis_and_bound(
+) -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.script(bound());
+        f.run().await?;
+        assert_eq!(
+            f.requests().len(),
+            2,
+            "two votes; bound to the only property, so no rule question"
+        );
+        let prompt = f.prompt_of(0);
+        assert!(prompt.contains("based_in"), "{prompt}");
+        assert!(
+            prompt.contains("fits by inheritance: organization is a subclass of legal_entity"),
+            "the model is told why the candidate fits: {prompt}"
+        );
+        let b = f.binding().await?;
+        assert_eq!(
+            (b.status.as_str(), b.decided_by.as_str()),
+            ("bound", "agent")
+        );
+        assert!(b.basis.is_some(), "an agent decision records its basis");
+        assert_eq!(f.typed().await?, 1, "the projection follows");
+        assert!(
+            !f.requeued().await?,
+            "unchanged inputs leave no queued work"
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+#[tokio::test]
+async fn removing_the_parent_edge_retires_the_projection_without_a_model_call() -> anyhow::Result<()>
+{
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.script(bound());
+        f.run().await?;
+        assert_eq!(f.typed().await?, 1);
+        sqlx::query("DELETE FROM entity_type_parents WHERE child_id=$1")
+            .bind(f.organization)
+            .execute(&f.pool)
+            .await?;
+        f.clear_jobs().await?;
+        f.run().await?;
+        assert_eq!(f.requests().len(), 2, "no candidate, nothing to ask");
+        let b = f.binding().await?;
+        assert_eq!(b.status, "none");
+        assert_eq!(f.reason().await?.as_deref(), Some("no_candidates"));
+        assert_eq!(f.typed().await?, 0, "the unsupported projection is retired");
+        assert!(!f.requeued().await?);
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+#[tokio::test]
+async fn adding_a_parent_edge_reopens_a_structural_none() -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        sqlx::query("DELETE FROM entity_type_parents WHERE child_id=$1")
+            .bind(f.organization)
+            .execute(&f.pool)
+            .await?;
+        f.run().await?;
+        assert_eq!(f.requests().len(), 0);
+        assert_eq!(f.binding().await?.status, "none");
+        assert!(!f.requeued().await?);
+        sqlx::query(
+            "INSERT INTO entity_type_parents(child_id,parent_id,is_primary) VALUES($1,$2,true)",
+        )
+        .bind(f.organization)
+        .bind(f.legal_entity)
+        .execute(&f.pool)
+        .await?;
+        f.script(bound());
+        f.run().await?;
+        assert_eq!(
+            f.requests().len(),
+            2,
+            "the edge changed the basis, so it is asked again"
+        );
+        assert_eq!(f.binding().await?.status, "bound");
+        assert_eq!(f.typed().await?, 1);
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+#[tokio::test]
+async fn overflow_is_recorded_for_a_person_and_recovers_when_candidates_shrink(
+) -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        // 61 条不声明域/值域的关系：哪一端都接受，加上 based_in 共 62 > 60
+        for i in 0..61 {
+            sqlx::query("INSERT INTO relation_types(id,kb_id,key,label,kind,temporal) VALUES($1,$2,$3,$3,'relation','state')")
+                .bind(Uuid::now_v7()).bind(f.kb).bind(format!("filler_{i}")).execute(&f.pool).await?;
+        }
+        f.run().await?;
+        assert_eq!(f.requests().len(), 0, "too many to ask");
+        let b = f.binding().await?;
+        assert_eq!(b.status, "undecided");
+        assert_eq!(f.reason().await?.as_deref(), Some("too_many_candidates"));
+        assert!(!f.requeued().await?, "overflow must not queue a run it cannot execute");
+        sqlx::query("DELETE FROM relation_types WHERE kb_id=$1 AND key LIKE 'filler_%'")
+            .bind(f.kb)
+            .execute(&f.pool)
+            .await?;
+        f.script(bound());
+        f.run().await?;
+        assert_eq!(f.requests().len(), 2);
+        assert_eq!(f.binding().await?.status, "bound");
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+#[tokio::test]
+async fn an_endpoint_class_change_moves_the_signature_and_the_old_row_stops_looping(
+) -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        // Acme 还没有类：签名 (based in, ?, place)，声明了域的属性不接受空的一端
+        sqlx::query("UPDATE entities SET type_id=NULL WHERE id=$1")
+            .bind(f.acme)
+            .execute(&f.pool)
+            .await?;
+        f.run().await?;
+        assert_eq!(f.requests().len(), 0);
+        let old = f.binding().await?;
+        assert_eq!((old.status.as_str(), old.subject_type_id), ("none", None));
+        // 类别词绑上了：签名换成 (based in, organization, place)，旧行成了孤儿
+        sqlx::query("UPDATE entities SET type_id=$2 WHERE id=$1")
+            .bind(f.acme)
+            .bind(f.organization)
+            .execute(&f.pool)
+            .await?;
+        f.script(bound());
+        f.run().await?;
+        assert_eq!(f.requests().len(), 2);
+        let all = phrase_bindings::bindings(&f.pool, f.kb).await?;
+        assert_eq!(all.len(), 2, "the orphan stays as a cached decision");
+        assert!(all
+            .iter()
+            .any(|b| b.subject_type_id == Some(f.organization) && b.status == "bound"));
+        assert!(
+            !f.requeued().await?,
+            "an orphan must not queue work it cannot execute"
+        );
+        f.run().await?;
+        assert_eq!(
+            f.requests().len(),
+            2,
+            "a second run asks nothing and queues nothing"
+        );
+        assert!(!f.requeued().await?);
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+#[tokio::test]
+async fn an_edit_during_the_model_request_leaves_the_decision_stale() -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.model.hold.store(true, std::sync::atomic::Ordering::SeqCst);
+        f.script(none());
+        let state = f.state.clone();
+        let kb = f.kb;
+        let worker = tokio::spawn(async move { align_phrases_reasking(&state, kb, 0).await });
+        tokio::time::timeout(std::time::Duration::from_secs(10), f.model.entered.notified()).await?;
+        // 模型还在答，定义改了：两票读的都是旧定义
+        sqlx::query("UPDATE relation_types SET description='NEW definition', updated_at=clock_timestamp() WHERE id=$1")
+            .bind(f.based_in)
+            .execute(&f.pool)
+            .await?;
+        f.model.release.notify_one();
+        worker.await??;
+        let b = f.binding().await?;
+        assert_eq!(b.status, "none");
+        assert!(
+            f.requeued().await?,
+            "the run noticed its own basis is already stale and queued another"
+        );
+        f.clear_jobs().await?;
+        f.script(bound());
+        f.run().await?;
+        assert_eq!(
+            f.requests().len(),
+            3,
+            "one vote that says none, then two votes (a none is not asked for rules): the basis differs, not the clock"
+        );
+        assert_eq!(f.binding().await?.status, "bound");
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+#[tokio::test]
+async fn a_person_decision_made_during_the_request_is_not_overwritten() -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.model
+            .hold
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        f.script(none());
+        let state = f.state.clone();
+        let kb = f.kb;
+        let worker = tokio::spawn(async move { align_phrases_reasking(&state, kb, 0).await });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            f.model.entered.notified(),
+        )
+        .await?;
+        let sig = phrase_bindings::signatures(&f.pool, f.kb).await?.remove(0);
+        phrase_bindings::decide(
+            &f.pool,
+            f.kb,
+            &sig,
+            phrase_bindings::Decision {
+                relation_type_id: Some(f.based_in),
+                direction: Some("forward"),
+                status: "bound",
+                votes: &json!({}),
+                decided_by: "person",
+                basis: None,
+                marks: None,
+                marks_asked: false,
+            },
+        )
+        .await?;
+        f.model.release.notify_one();
+        worker.await??;
+        let b = f.binding().await?;
+        assert_eq!(
+            (b.status.as_str(), b.decided_by.as_str()),
+            ("bound", "person")
+        );
+        assert!(
+            !f.requeued().await?,
+            "a person's decision is never re-evaluated"
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+/// 类别词那边 bench 里「12 篇文档一个词都没绑上」的回复形状搬到短语上：DeepSeek-V3.2
+/// 把整段答成按 id 作键的对象，第二票把 `b` 写成对象、值写成 `{"key","direction"}`。
+/// 第一票说没有，结论就是没有：第二票不投，也不问规则
+#[tokio::test]
+async fn a_first_vote_that_says_none_is_not_followed_by_a_second() -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.script(vec![
+            vote(None, None),
+            vote(Some("based_in"), Some("forward")),
+        ]);
+        f.run().await?;
+        assert_eq!(f.requests().len(), 1, "one vote");
+        assert_eq!(f.binding().await?.status, "none");
+        assert_eq!(f.reason().await?.as_deref(), Some("first_vote_none"));
+        assert_eq!(f.typed().await?, 0);
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+/// 两票都得读出来，签名才绑得上
+#[tokio::test]
+async fn an_id_keyed_reply_still_binds_the_phrase() -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.script(vec![
+            json!({"0": ["based_in", "forward", "none"]}),
+            json!({"b": {"0": {"key": "based_in", "direction": "forward", "marks": "none"}}}),
+            nothing_implied(),
+        ]);
+        f.run().await?;
+        assert_eq!(f.requests().len(), 2, "two votes, both read");
+        let b = f.binding().await?;
+        assert_eq!(
+            (b.status.as_str(), b.decided_by.as_str()),
+            ("bound", "agent")
+        );
+        assert_eq!(b.relation_type_id, Some(f.based_in));
+        assert_eq!(b.direction.as_deref(), Some("forward"));
+        assert_eq!(f.typed().await?, 1, "the projection follows");
+        assert!(!f.requeued().await?, "nothing left to ask");
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+/// 读不出的回复不再是「一项都没答」然后没了：这一轮不下结论、不写任何行，任务自己
+/// 再排一份（带 reask），排够 MAX_REASK 次就停，等下一篇文档或本体改动
+#[tokio::test]
+async fn an_unreadable_reply_is_asked_again_a_bounded_number_of_times() -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.script(vec![
+            json!({"answer": "based_in", "direction": "forward"}),
+            json!({"answer": "based_in", "direction": "forward"}),
+            json!({"answer": "based_in", "direction": "forward"}),
+            json!({"answer": "based_in", "direction": "forward"}),
+        ]);
+        f.run().await?;
+        assert_eq!(
+            f.requests().len(),
+            1,
+            "the first vote is unreadable, the second is not cast"
+        );
+        assert!(
+            phrase_bindings::bindings(&f.pool, f.kb).await?.is_empty(),
+            "an unreadable reply writes no decision"
+        );
+        let reasks: Vec<(String, Option<i64>)> = sqlx::query_as(
+            "SELECT status, (payload->>'reask')::bigint FROM jobs
+             WHERE kind='align_phrases' AND payload->>'kb_id'=$1 ORDER BY id",
+        )
+        .bind(f.kb.to_string())
+        .fetch_all(&f.pool)
+        .await?;
+        assert_eq!(
+            reasks,
+            vec![("queued".to_string(), Some(1))],
+            "after the first round it queues itself once with reask=1"
+        );
+        f.clear_jobs().await?;
+        // 已经是最后一次自己排的：不再排
+        align_phrases_reasking(&f.state, f.kb, MAX_REASK).await?;
+        assert_eq!(f.requests().len(), 2, "the last allowed round still asks");
+        let after: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM jobs WHERE kind='align_phrases' AND payload->>'kb_id'=$1",
+        )
+        .bind(f.kb.to_string())
+        .fetch_one(&f.pool)
+        .await?;
+        assert_eq!(after, 0, "past MAX_REASK it stops queueing itself");
+        assert!(phrase_bindings::bindings(&f.pool, f.kb).await?.is_empty());
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+/// 编辑器建的属性先有向量，短语对齐才开跑：处理函数把 `embed_ontology` 排在
+/// `align_phrases` 前面，对齐看见补齐还排着就等；补齐跑完向量在表里，对齐才问模型，
+/// 而且新属性在候选里。改了描述再走一遍：存下的原文对不上，同一个任务把它重嵌
+#[tokio::test]
+async fn a_property_created_in_the_editor_has_its_vector_before_phrases_are_aligned(
+) -> anyhow::Result<()> {
+    use crate::api::ontology_routes::{
+        create_relation_type, update_relation_type, RelationTypeReq,
+    };
+    use crate::auth::AuthUser;
+    use axum::extract::{Path, State};
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.enable_embeddings().await?;
+        let editor = f.editor().await?;
+        let req: RelationTypeReq = serde_json::from_value(json!({
+            "key": "headquartered_in",
+            "label": "headquartered in",
+            "kind": "relation",
+            "description": "where the main office of an entity is",
+            "domains": [f.legal_entity],
+            "ranges": [f.place],
+        }))?;
+        let created = create_relation_type(
+            State(f.state.clone()),
+            AuthUser(editor.clone()),
+            Path(f.kb),
+            axum::Json(req),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("create_relation_type: {:?}", e.0))?;
+        let id: Uuid = serde_json::from_value(created.0["id"].clone())?;
+
+        assert_eq!(
+            f.queued().await?,
+            vec!["embed_ontology".to_string(), "align_phrases".to_string()],
+            "the index refresh is queued ahead of the alignment"
+        );
+        assert_eq!(
+            f.vector_of(id).await?,
+            (false, None),
+            "the handler itself does not embed"
+        );
+
+        // 对齐先到：补齐还排着，不问模型，自己排到后面
+        f.script(bound());
+        f.run().await?;
+        assert_eq!(
+            f.requests().len(),
+            0,
+            "nothing is asked while the index refresh is still queued"
+        );
+        assert_eq!(
+            f.queued().await?,
+            vec!["embed_ontology".to_string(), "align_phrases".to_string()],
+            "the alignment is queued again behind the refresh"
+        );
+
+        // worker 到补齐这一份：跑它的主体，标成完成
+        let embedded = crate::ontology_index::refresh(&f.state, f.kb).await?;
+        assert_eq!(
+            embedded, 8,
+            "the three classes twice over (full text and label) plus based_in and the new property"
+        );
+        sqlx::query(
+            "UPDATE jobs SET status='done' WHERE kind='embed_ontology' AND payload->>'kb_id'=$1",
+        )
+        .bind(f.kb.to_string())
+        .execute(&f.pool)
+        .await?;
+        let (present, text) = f.vector_of(id).await?;
+        assert!(
+            present,
+            "the property is in the vector table before align_phrases runs"
+        );
+        assert_eq!(
+            text.as_deref(),
+            Some("headquarteredIn\nwhere the main office of an entity is"),
+            "label (camel-cased by the store) and description are what was embedded"
+        );
+
+        // 现在对齐开跑，而且新属性在候选里
+        f.run().await?;
+        assert!(
+            !f.requests().is_empty(),
+            "the refresh done, the model is asked"
+        );
+        let prompt = f.prompt_of(0);
+        assert!(
+            prompt.contains("headquartered_in"),
+            "the new property is offered: {prompt}"
+        );
+
+        // 改描述：存下的原文对不上，补齐任务再排、只重嵌这一条
+        f.clear_jobs().await?;
+        let req: RelationTypeReq = serde_json::from_value(json!({
+            "label": "headquartered in",
+            "kind": "relation",
+            "description": "where the head office of an organization sits",
+        }))?;
+        let updated = update_relation_type(
+            State(f.state.clone()),
+            AuthUser(editor),
+            Path((f.kb, id)),
+            axum::Json(req),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("update_relation_type: {:?}", e.0))?;
+        assert_eq!(updated.0["ok"], json!(true));
+        assert_eq!(
+            f.queued().await?,
+            vec!["embed_ontology".to_string(), "align_phrases".to_string()],
+            "a changed description queues the refresh ahead of the alignment again"
+        );
+        assert_eq!(
+            crate::ontology_index::refresh(&f.state, f.kb).await?,
+            1,
+            "only the row whose text changed is re-embedded"
+        );
+        assert_eq!(
+            f.vector_of(id).await?.1.as_deref(),
+            Some("headquarteredIn\nwhere the head office of an organization sits"),
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+/// 状态属性下，两票还要说只带一个日期的陈述那个日期标什么（#966）。候选行写明属性是
+/// 状态；两票说得一样就绑，marks 跟着写下，两票的记录里也有它
+#[tokio::test]
+async fn a_state_binding_carries_what_a_single_date_marks() -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.script(vec![
+            marked(Some("based_in"), Some("forward"), Some("start")),
+            marked(Some("based_in"), Some("forward"), Some("start")),
+        ]);
+        f.run().await?;
+        assert_eq!(f.requests().len(), 2);
+        let prompt = f.prompt_of(0);
+        assert!(
+            prompt.contains("- based_in · based in · relation · state ·"),
+            "the model is told the property is a state: {prompt}"
+        );
+        let b = f.binding().await?;
+        assert_eq!(
+            (b.status.as_str(), b.marks.as_deref()),
+            ("bound", Some("start"))
+        );
+        let votes: Value = sqlx::query_scalar("SELECT votes FROM phrase_bindings WHERE kb_id=$1")
+            .bind(f.kb)
+            .fetch_one(&f.pool)
+            .await?;
+        assert_eq!(
+            (&votes["first"]["marks"], &votes["second"]["marks"]),
+            (&json!("start"), &json!("start"))
+        );
+        assert!(!f.requeued().await?);
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+/// 这条签名在对齐队列里：绑到 based_in、照原文方向，只等人说那个日期标什么
+async fn waits_for_the_date(f: &Fx) -> anyhow::Result<bool> {
+    let items = utopia_store::alignment_queue::list(&f.pool, f.kb, 10, 0).await?;
+    let listed = matches!(
+        items.as_slice(),
+        [utopia_store::alignment_queue::AlignmentItem::Phrase {
+            bound_to: Some(p),
+            direction: Some(d),
+            ..
+        }] if p == "based_in" && d == "forward"
+    );
+    let waiting = utopia_store::alignment_queue::waiting(&f.pool, f.kb)
+        .await?
+        .0;
+    let badge = utopia_store::review::counts(&f.pool, f.kb).await?.alignment;
+    Ok(listed && waiting == 1 && badge == 1)
+}
+
+/// 两票选了同一个属性、同一个方向，却一票说开始、一票说结束，或有一票没说（只答三格）：
+/// 属性两票说定了，照绑；那个日期没说定，marks 空着、记下问过，交给人。不再问，也不给
+/// 自己再排一轮（0053 修订 2026-09-27）。从前没说的算没答到，模型只答三格就永远绑不上
+#[tokio::test]
+async fn two_votes_that_do_not_agree_on_the_date_bind_and_leave_it_to_a_person(
+) -> anyhow::Result<()> {
+    let three_cells = json!({"b":[[0, "based_in", "forward"]]});
+    for (label, first) in [
+        (
+            "end",
+            marked(Some("based_in"), Some("forward"), Some("end")),
+        ),
+        ("three cells", three_cells),
+    ] {
+        let Some(f) = Fx::new().await? else {
+            return Ok(());
+        };
+        let run = async {
+            f.script(vec![
+                first,
+                marked(Some("based_in"), Some("forward"), Some("start")),
+            ]);
+            f.run().await?;
+            let b = f.binding().await?;
+            assert_eq!(
+                (b.status.as_str(), b.relation_type_id, b.marks.as_deref()),
+                ("bound", Some(f.based_in), None),
+                "{label}"
+            );
+            assert!(b.marks_asked_at.is_some(), "{label}: asked");
+            let votes: Value =
+                sqlx::query_scalar("SELECT votes FROM phrase_bindings WHERE kb_id=$1")
+                    .bind(f.kb)
+                    .fetch_one(&f.pool)
+                    .await?;
+            assert_eq!(
+                &votes["second"]["marks"],
+                &json!("start"),
+                "{label}: both readings are kept for the person"
+            );
+            assert_eq!(f.typed().await?, 1, "{label}: the statement is typed");
+            assert!(waits_for_the_date(&f).await?, "{label}");
+            assert!(!f.requeued().await?, "{label}: no re-ask");
+            f.run().await?;
+            assert_eq!(f.requests().len(), 2, "{label}: asked once");
+            anyhow::Ok(())
+        }
+        .await;
+        f.cleanup().await?;
+        run?;
+    }
+    Ok(())
+}
+
+impl Fx {
+    /// 把绑定改回这一问出现之前的样子：没有 marks，也没问过
+    async fn as_before_the_question(&self) -> anyhow::Result<()> {
+        sqlx::query(
+            "UPDATE phrase_bindings SET marks = NULL, marks_asked_at = NULL WHERE kb_id=$1",
+        )
+        .bind(self.kb)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+    /// 绑定里补问不该动的部分：属性、方向、状态、谁判的、何时判的、指纹、两票
+    async fn decision(&self) -> anyhow::Result<Value> {
+        Ok(sqlx::query_scalar(
+            "SELECT jsonb_build_array(relation_type_id, direction, status, decided_by,
+                                      decided_at, basis, votes)
+               FROM phrase_bindings WHERE kb_id=$1",
+        )
+        .bind(self.kb)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+}
+
+/// 这一问出现之前判下的绑定没有 marks。代理判的：指纹没变也问一次，只问那个日期标什么，
+/// 两票都认这条绑定、又说了同一个值就写下，绑定别的不动；问过就不再问。
+/// 人判的：代理不问，它在对齐队列里等人补，属性与方向是现在绑的
+#[tokio::test]
+async fn a_binding_decided_before_the_question_is_asked_once_and_a_persons_waits_in_the_queue(
+) -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.script(bound());
+        f.run().await?;
+        assert_eq!(f.binding().await?.marks.as_deref(), Some("none"));
+        f.as_before_the_question().await?;
+        let decided = f.decision().await?;
+        f.script(vec![
+            marked(Some("based_in"), Some("forward"), Some("start")),
+            marked(Some("based_in"), Some("forward"), Some("start")),
+        ]);
+        f.run().await?;
+        assert_eq!(
+            f.requests().len(),
+            4,
+            "the fingerprint matches, yet the binding is asked for the value it lacks"
+        );
+        assert_eq!(f.decision().await?, decided, "only the value is written");
+        let b = f.binding().await?;
+        assert_eq!(b.marks.as_deref(), Some("start"));
+        assert!(b.marks_asked_at.is_some());
+        f.run().await?;
+        assert_eq!(f.requests().len(), 4, "asked once: it has its value now");
+        assert!(!f.requeued().await?);
+
+        let sig = phrase_bindings::signatures(&f.pool, f.kb).await?.remove(0);
+        phrase_bindings::decide(
+            &f.pool,
+            f.kb,
+            &sig,
+            phrase_bindings::Decision {
+                relation_type_id: Some(f.based_in),
+                direction: Some("forward"),
+                status: "bound",
+                votes: &json!({"person": {"property": "based_in", "direction": "forward"}}),
+                decided_by: "person",
+                basis: None,
+                marks: None,
+                marks_asked: false,
+            },
+        )
+        .await?;
+        f.run().await?;
+        assert_eq!(f.requests().len(), 4, "a person's binding is not asked");
+        assert!(waits_for_the_date(&f).await?);
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+/// 模型从来不给第四格（#975 评审）：这一列之前绑上的签名只问一次。绑定原样，它名下的
+/// 类型化行还活着，签名在对齐队列里等人；再跑一轮不再问，也不给自己排下一轮
+#[tokio::test]
+async fn a_model_that_never_gives_the_value_is_asked_once() -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.script(bound());
+        f.run().await?;
+        assert_eq!(f.typed().await?, 1);
+        f.as_before_the_question().await?;
+        let decided = f.decision().await?;
+        let three_cells = json!({"b":[[0, "based_in", "forward"]]});
+        f.script(vec![three_cells.clone(), three_cells]);
+        f.run().await?;
+        assert_eq!(f.requests().len(), 4, "one ask: two votes");
+        assert_eq!(f.decision().await?, decided, "the binding is unchanged");
+        assert_eq!(f.typed().await?, 1, "its typed row is still live");
+        f.run().await?;
+        f.run().await?;
+        assert_eq!(f.requests().len(), 4, "not asked again");
+        let b = f.binding().await?;
+        assert_eq!(
+            (b.marks.as_deref(), b.marks_asked_at.is_some()),
+            (None, true)
+        );
+        assert!(waits_for_the_date(&f).await?);
+        assert!(!f.requeued().await?, "no re-ask is queued");
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}
+
+/// 补问只能写那个日期标什么，重开不了绑定（#975 评审）：两票没选属性、选了另一个方向、
+/// 说的值不一样，绑定都原样，类型化行还活着，签名交给人；两票都认这条绑定、说了同一个值，
+/// 才写下那个值
+#[tokio::test]
+async fn asking_what_a_date_marks_never_reopens_the_binding() -> anyhow::Result<()> {
+    let Some(f) = Fx::new().await? else {
+        return Ok(());
+    };
+    let run = async {
+        f.script(bound());
+        f.run().await?;
+        let answers = [
+            ("no property", vote(None, None), vote(None, None), None),
+            (
+                "the other direction",
+                marked(Some("based_in"), Some("reverse"), Some("start")),
+                marked(Some("based_in"), Some("reverse"), Some("start")),
+                None,
+            ),
+            (
+                "two readings",
+                marked(Some("based_in"), Some("forward"), Some("start")),
+                marked(Some("based_in"), Some("forward"), Some("end")),
+                None,
+            ),
+            (
+                "one reading",
+                marked(Some("based_in"), Some("forward"), Some("end")),
+                marked(Some("based_in"), Some("forward"), Some("end")),
+                Some("end"),
+            ),
+        ];
+        for (label, first, second, value) in answers {
+            f.as_before_the_question().await?;
+            let decided = f.decision().await?;
+            f.script(vec![first, second]);
+            f.run().await?;
+            assert_eq!(
+                f.decision().await?,
+                decided,
+                "{label}: the binding is unchanged"
+            );
+            assert_eq!(f.typed().await?, 1, "{label}: its typed row is still live");
+            let b = f.binding().await?;
+            assert_eq!(
+                (b.marks.as_deref(), b.marks_asked_at.is_some()),
+                (value, true),
+                "{label}"
+            );
+            assert_eq!(waits_for_the_date(&f).await?, value.is_none(), "{label}");
+            assert!(!f.requeued().await?, "{label}");
+        }
+        anyhow::Ok(())
+    }
+    .await;
+    f.cleanup().await?;
+    run
+}

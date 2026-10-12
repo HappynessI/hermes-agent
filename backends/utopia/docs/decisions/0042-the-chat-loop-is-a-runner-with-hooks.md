@@ -1,0 +1,187 @@
+# 0042 · The chat loop is a runner with hooks
+
+- **Status**: Implemented (#548) · revised 2026-09-26 (#937) · revised 2026-09-27 (#973)
+- **Written**: 2026-09-13 (conventions in the [README](README.md))
+- **Related**: #546 (the issue and its findings), #509 / #543 (the stall and the guard this
+  replaces), #547 (the mark on answers that cite nothing), #631 (the empty-reply retry, moved
+  into a hook here), [0014](0014-identity-from-the-person-scope-from-the-token.md) (MCP sees the
+  same tool list)
+
+## Why a decision is needed
+
+`chat.rs` used to hold a hand-written agent loop of about 1,100 lines. Every policy question
+became another branch inside it: budget exhaustion, the first-round fallback to one-shot RAG,
+the replay of earlier tool exchanges, and finally #543's guard for #509 — the model says "let me
+look that up" and the turn ends. The guard asked the model once whether it was done; in fifteen
+real turns it fired four times and the model answered `DONE` every time, including right after
+promising a search. A heuristic judged by the model it is meant to correct does not converge.
+
+Three loop defects were found while reading it (#546): any first-round error was treated as
+"this endpoint cannot call tools" and degraded to RAG; the block of entities already identified
+in the conversation was injected as a `user` message, which the model answered as if the user
+had written it; and an empty reply became an error frame with no retry.
+
+## Decisions
+
+### 1. The loop belongs to a library; the policy is ours
+
+The loop is rig's multi-turn runner. Every decision we make is a hook with a typed result, not
+a branch in a loop body:
+
+| hook | decision |
+|---|---|
+| `on_completion_call` | `tool_choice: required` until a tool has run; at the budget boundary, stop before provider I/O and hand evidence to the answer call |
+| `on_tool_call` | `check_call` refuses a malformed call, and the model gets the same message as before |
+| `on_tool_result` | the tool's UI step goes to the stream |
+| `on_model_turn_finished` | an empty turn is asked again once (#631); a text-only first turn from an endpoint that ignored `required` is sent back once; a turn that writes its tool call as text is sent back once (#937) |
+
+rig was chosen over swiftide-agents because it is maintained and does not bring its own context
+model. Neither has a provider we want: see decision 2.
+
+### 2. The wire stays `LlmClient`
+
+`RigModel` implements rig's `CompletionModel` on top of `LlmClient`. The read timeout, error
+bodies (#538), the out-of-credit versus rate-limit classification and the cache-hit logging all
+predate this and are not re-earned in another client. Two request-shape decisions live there:
+earlier entities become a `system` message right before the question, and `ToolChoice::None`
+omits tool fields on the wire.
+
+Degradation to one-shot RAG happens only when the first request that carries tools comes back
+400 or 422 (`utopia_llm::Rejected`). A network failure is an error frame. Revised 2026-09-27
+(#973): a context-window refusal is `ContextTooLong`, not `Rejected`; it drops older history and
+sends the request once more, see
+[below](#a-context-refusal-trims-history-once-973-revised-2026-09-27).
+
+### 3. A turn cannot end before a tool has run
+
+Termination is structural. The first request of a turn requires a tool call, and
+`no_evidence_needed` is the honest exit for a greeting or "make it shorter". "Please wait, I will
+call the tool" is no longer a possible final state; `STALL_NUDGE`, `DONE` and the no-evidence
+note are deleted.
+
+This guarantees a decision, not a correct one. DeepSeek-V3 still calls `no_evidence_needed` on
+some data questions (1–3 of 12 fresh questions across runs; Qwen2.5-72B, same prompt: 0 of 12).
+Neither prompt wording nor the terminal's result moved the rate (measured in #548, 36 turns).
+What changed is that the miss is recorded: the call and the model's reason are in
+`tool_exchange`, and `sources` is empty, which is what #547 marks.
+
+## Budget finalization is an answer boundary (#844, revised 2026-09-21)
+
+The endpoint can emit tool-control syntax in `delta.content` after tools are withdrawn.
+Captured upstream failures contained DSML in `delta.content`, a `stop` finish reason,
+and no structured tool calls. Replaying those responses through the actual `LlmClient`
+parser reproduced the content exactly; the adapter had not converted valid calls to prose.
+Explicit `tool_choice: none` did not eliminate the problem in a fixed-evidence comparison.
+This establishes an upstream-content failure for those samples, not the provider's internal
+root cause. Run-by-run measurements and historical implementation identifiers are kept in
+[PR #845](https://github.com/deeplethe/utopia/pull/845), rather than a second decision record.
+
+The evidence-only handoff is chosen over passive recovery because it avoids issuing the
+known failure-prone protocol-history request at the budget boundary. The focused answer
+policy preserves the evidence while limiting unnecessary elaboration. This is a protocol
+reliability decision, not a latency or universal factual-correctness guarantee.
+
+The gathering policy still has six tool-capable logical turns, including early empty-reply
+and required-tool nudges. An ordinary early answer or `no_evidence_needed` keeps its existing
+short path. At turn seven, `on_completion_call` sets a per-run handoff flag and returns
+`CompletionCallAction::Stop`. The locked Rig 0.42 implementation resolves this hook before
+provider I/O. The route accepts the handoff only with both that flag and typed
+`PromptCancelled`; an upstream error containing the same words is still an error.
+
+The reserved seventh call is now the independent answer call, rather than an old protocol
+history request that must fail before recovery. `chat_finalization` owns this call and at
+most one repair of an invalid candidate. There is no second agent framework or tool server.
+It sends only a dedicated answer system message and an explicitly untrusted JSON data
+message: current question, conversation background, previous observations, every completed
+current tool result, final source registry, and resolved entities. Tool result bytes and
+identities are retained, including failures, unknown status, duplicate observations and
+existing truncation markers. The no-evidence gate is not presented as retrieved evidence.
+The current user message is excluded by stored identity, not text deduplication. Previous
+citation numbers have a separate unmapped namespace; they cannot be reused as current IDs.
+
+The answer policy preserves numbers, units, time precision, plan/report/verified distinctions,
+and the pending-review status of a memory write. It asks for the requested facts concisely;
+it does not retain the gathering preamble. Neither call contains `tools`, `tool_choice`,
+`role=tool`, or protocol-level `assistant.tool_calls`, and there is no request-shape fallback.
+Rejected candidate text never enters the repair input: only its error category does.
+
+Without gathering-stage compatibility retries, the normal boundary costs six gathering
+calls plus one answer call; one format repair raises that to eight. Auth, billing, rate,
+input, transport, content-filter, unknown-finish, size and deadline failures do not authorize
+a repair. Blank text, bare DSML, structured calls and a length finish may be repaired once.
+A missing finish reason remains missing and follows the existing completed-stream contract.
+The two answer attempts share one 120-second deadline. The fully serialized request and
+accumulated answer text each have a 1 MiB bound; no evidence is silently cut to fit.
+Physical HTTP counts must also include the pre-existing gathering compatibility retries.
+
+DSML detection remains a last publication guard, never a parser or executor. It checks the
+assembled terminal candidate and bare control line starts outside Markdown fences, while
+preserving explanations, quotations and explicit example requests. Merely mentioning DSML
+in a business question is not permission to output a control block.
+
+Only the boundary answer is buffered; earlier narration and steps continue streaming.
+Final sources and entities are snapshotted under the sink lock, which is released before
+model or database I/O. The assistant INSERT must succeed before the buffered answer and
+`done` are published. A save error emits an error, without another model call or a successful
+terminal event. Already-streamed early narration cannot be retracted. Disconnect/reattach
+continues through the existing background producer and persisted body/source mapping.
+
+> **Revised 2026-09-26 (#937): tool-control text is checked in every turn.** The two paragraphs
+> above kept the check to the boundary answer. An ordinary turn could still write its call as
+> text, with no structured call: DeepSeek's native `<｜tool▁call▁begin｜>` markup (2 of the 35
+> questions in the bench's chat run failed this way) or DSML. Nothing ran, yet the markup
+> streamed to the reader, was stored as the answer and ended in `done`; in a first turn the
+> required-tool nudge got a real call, but the markup stayed at the head of the stored answer.
+> The check now runs on every turn and also knows DeepSeek's two opening markers. While a tool
+> round streams, a line that is or may still become a marker is held back, and after a marker
+> the rest of the turn is held with it; other narration streams as before. A text-only turn
+> that is tool-control text is sent back once (`MARKUP_RETRY`, keeping the turn so the model
+> sees what it wrote); a second one is an error and nothing is stored. Held text beside a
+> structured call is dropped if it is markup and released otherwise, and a fenced example is
+> released when its turn ends. It is still a publication guard, not a parser, and Qwen-style
+> `<tool_call>` tags are not recognised.
+
+This boundary is not a factuality oracle. The evaluation separately records required fact
+slots, citation syntax/mapping, additional unsupported statements and false insufficiency.
+A clean result on one frozen set is not a zero-failure guarantee.
+
+## A context refusal trims history once (#973, revised 2026-09-27)
+
+The 20-message window alone let ten large answers make every later turn fail (#964). The
+endpoint's context refusal was read as unsupported tools, so removing `tool_choice` and then
+falling back to RAG sent the same oversized history twice more. Three things change.
+
+**The refusal has its own class.** `utopia-llm` reads `context_length_exceeded` from the error
+code first, then the vendor's wording (`maximum context length`, `context window`, `too many
+tokens`, `prompt is too long`, `exceeds the available context`), next to
+`stated_completion_ceiling`, and `rejected_shape` is false for it. DeepSeek's 400 carries only the
+generic `invalid_request_error` code; its sentence "This model's maximum context length is 1048576
+tokens. However, you requested …" is what is recognized (confirmed 2026-09-27).
+
+**History is bounded by size as well as by count.** Inside the 20-message window at most 32,000
+characters of history are sent, the oldest whole exchanges dropped first; a failed question and
+a stopped answer count like any other, and an orphan answer at the count boundary is not sent.
+The previous turn's tool exchange is the first thing to go: one `get_document` result can be
+24,000 characters, and tying it to the last answer meant a follow-up such as "make it shorter"
+went out with no history at all. The budget is a character heuristic, not token accounting.
+
+**One recovery per user turn.** On a recognized refusal the remaining history is halved and the
+request sent once more; the current question, the system prompt and the current turn's tool
+results stay whole, and no tool runs again. Tool calling, the RAG fallback and the final
+evidence-only answer share that one retry. When nothing can be dropped there is no retry. A
+second refusal ends the turn with `context_too_long`, worded as the conversation being too long
+for the model. The workspace's conversation client remembers a stated window of at least 1,024
+tokens across turns and clones; the budget becomes half that many characters and never falls
+below 2,000; changing the model settings forgets it. Stored messages are never altered.
+
+## Not done
+
+- A per-task model (`on_model_select`, #470) is available in the runner and not wired.
+- Choosing a different chat model per base is the product answer to the skip rate; it is
+  configuration, not loop code.
+
+## Status history
+
+The status line as it stood on 2026-09-27, before status lines were cut to one line:
+
+> Implemented (#548) · the loop is rig's runner (`rig-core` / `rig-agent` 0.42, no default features) · policy is one `AgentHook` in `api/agent.rs` · the wire stays `LlmClient` behind `api/rig_model.rs` · revised 2026-09-26 (#937: tool-control text is checked in every turn, not only the boundary answer)

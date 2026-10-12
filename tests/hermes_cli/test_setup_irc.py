@@ -71,6 +71,10 @@ class TestIRCFreshInstallDiscovery:
             platforms = gateway_mod._all_platforms()
             keys = {p["key"] for p in platforms}
             assert "irc" in keys
+
+            irc_plat = next(p for p in platforms if p["key"] == "irc")
+            assert irc_plat["label"] == "IRC"
+            assert irc_plat["emoji"] == "💬"
         finally:
             _unregister_irc_platform()
 
@@ -180,6 +184,7 @@ class TestIRCGatewaySetupFreshInstall:
                 f"No platform prompt found in {checklist_calls}"
             choices_text = "\n".join(platform_prompt["choices"])
             assert "IRC" in choices_text
+            assert "💬" in choices_text
             assert "not configured" in choices_text.lower()
         finally:
             _unregister_irc_platform()

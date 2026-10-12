@@ -1,12 +1,12 @@
 ---
 sidebar_position: 4
 title: "Memory Providers"
-description: "外部记忆提供者插件 — Honcho、OpenViking、Mem0、Hindsight、Holographic、RetainDB、ByteRover、Supermemory"
+description: "外部记忆提供者插件 — Honcho、OpenViking、Mem0、Hindsight、Holographic、RetainDB、ByteRover、Supermemory、TencentDB Agent Memory"
 ---
 
 # Memory Providers
 
-Hermes Agent 内置 8 个外部记忆提供者插件，为 Agent 提供跨会话的持久化知识，超越内置的 MEMORY.md 和 USER.md。同一时间只能激活**一个**外部提供者——内置记忆始终与其并行工作。
+Hermes Agent 内置 9 个外部记忆提供者插件，为 Agent 提供跨会话的持久化知识，超越内置的 MEMORY.md 和 USER.md。同一时间只能激活**一个**外部提供者——内置记忆始终与其并行工作。
 
 ## 快速开始
 
@@ -22,7 +22,7 @@ hermes memory off        # 禁用外部提供者
 
 ```yaml
 memory:
-  provider: openviking   # 或 honcho, mem0, hindsight, holographic, retaindb, byterover, supermemory
+  provider: openviking   # 或 honcho, mem0, hindsight, holographic, retaindb, byterover, supermemory, memory_tencentdb
 ```
 
 ## 工作原理
@@ -47,7 +47,7 @@ AI 原生的跨会话用户建模，具备辩证推理、会话范围上下文�
 | | |
 |---|---|
 | **适合场景** | 具有跨会话上下文的多 Agent 系统、用户-Agent 对齐 |
-| **依赖** | `hermes memory setup` 通过 PM 准备 Honcho SDK；[API key](https://app.honcho.dev) 或自托管实例 |
+| **依赖** | `pip install honcho-ai` + [API key](https://app.honcho.dev) 或自托管实例 |
 | **数据存储** | Honcho Cloud 或自托管 |
 | **费用** | Honcho 定价（云端）/ 免费（自托管） |
 
@@ -197,7 +197,7 @@ hermes honcho sync
 
 通过 [Honcho 控制台](https://app.honcho.dev) 设置的服务端开关优先于本地默认值——在会话初始化时同步回来。
 
-参见 [Honcho 页面](./honcho.md#观察模式定向-vs-统一) 获取完整的 observation 参考。
+参见 [Honcho 页面](./honcho.md#observation-directional-vs-unified) 获取完整的 observation 参考。
 
 <details>
 <summary>完整 honcho.json 示例（多 profile）</summary>
@@ -267,7 +267,7 @@ hermes honcho sync
 | | |
 |---|---|
 | **适合场景** | 具有结构化浏览功能的自托管知识管理 |
-| **依赖** | 独立部署的 OpenViking 服务器；通过 `hermes memory setup` 准备 Hermes 端依赖 |
+| **依赖** | `pip install openviking` + 运行中的服务器 |
 | **数据存储** | 自托管（本地或云端） |
 | **费用** | 免费（开源，AGPL-3.0） |
 
@@ -275,9 +275,8 @@ hermes honcho sync
 
 **安装：**
 ```bash
-# 使用独立部署的 OpenViking 服务器，不要安装到 Hermes 的依赖环境
-openviking-server init
-openviking-server doctor
+# 先启动 OpenViking 服务器
+pip install openviking
 openviking-server
 
 # 然后配置 Hermes
@@ -286,8 +285,6 @@ hermes memory setup    # 选择 "openviking"
 hermes config set memory.provider openviking
 echo "OPENVIKING_ENDPOINT=http://localhost:1933" >> ~/.hermes/.env
 ```
-
-当端点为本地地址且没有进程在监听时，Hermes 会在后台启动 `openviking-server`。该服务器会获得你的模型提供商密钥（供其嵌入和 VLM 模型使用）、你的 `HOME` 与 `OPENVIKING_CONFIG_FILE`，但绝不会获得机器人、网关或中继令牌，也不会获得 Hermes 的 `PYTHONPATH`。服务器需要的其他设置请写入 `ov.conf`。
 
 **主要特性：**
 - 分层上下文加载：L0（约 100 tokens）→ L1（约 2k）→ L2（完整）
@@ -303,7 +300,7 @@ echo "OPENVIKING_ENDPOINT=http://localhost:1933" >> ~/.hermes/.env
 | | |
 |---|---|
 | **适合场景** | 免维护的记忆管理——Mem0 自动处理提取 |
-| **依赖** | `hermes memory setup` 通过 PM 准备 Mem0 SDK；API key 或自托管/OSS 服务配置 |
+| **依赖** | `pip install mem0ai` + API key |
 | **数据存储** | Mem0 Cloud |
 | **费用** | Mem0 定价 |
 
@@ -355,7 +352,7 @@ echo "HINDSIGHT_API_KEY=your-key" >> ~/.hermes/.env
 
 | 键 | 默认值 | 描述 |
 |-----|---------|-------------|
-| `mode` | `cloud` | `cloud`、`local_embedded` 或 `local_external` |
+| `mode` | `cloud` | `cloud` 或 `local` |
 | `bank_id` | `hermes` | 记忆库标识符 |
 | `recall_budget` | `mid` | 召回彻底程度：`low` / `mid` / `high` |
 | `memory_mode` | `hybrid` | `hybrid`（上下文 + 工具）、`context`（仅自动注入）、`tools`（仅工具） |
@@ -465,12 +462,12 @@ hermes config set memory.provider byterover
 
 ### Supermemory
 
-语义长期记忆，具备 profile 召回、语义搜索、显式记忆工具，以及逐轮对话捕获（每个会话每 4 小时一个文档）。
+语义长期记忆，具备 profile 召回、语义搜索、显式记忆工具，以及通过 Supermemory graph API 进行会话结束时的对话导入。
 
 | | |
 |---|---|
 | **适合场景** | 带用户 profile 和会话级图谱构建的语义召回 |
-| **依赖** | `hermes memory setup` 通过 PM 准备 Supermemory SDK；[云端 API key](http://app.supermemory.ai/integrations?connect=hermes)，或[自托管服务器](https://supermemory.ai/docs/self-hosting/overview) |
+| **依赖** | `pip install supermemory` + [云端 API key](http://app.supermemory.ai/integrations?connect=hermes)，或[自托管服务器](https://supermemory.ai/docs/self-hosting/overview) |
 | **数据存储** | Supermemory 云端或自托管 |
 | **费用** | 云端按 Supermemory 定价 / 自托管免费 |
 
@@ -513,17 +510,17 @@ npx supermemory local
 | `profile_frequency` | `50` | 在第一轮及每 N 轮包含 profile 事实 |
 | `capture_mode` | `all` | 默认跳过过短或无意义的轮次 |
 | `search_mode` | `hybrid` | 搜索模式：`hybrid`、`memories` 或 `documents` |
-| `api_timeout` | `5.0` | SDK 请求的超时时间 |
+| `api_timeout` | `5.0` | SDK 和导入请求的超时时间 |
 
 **环境变量：** `SUPERMEMORY_API_KEY`（必填）、`SUPERMEMORY_BASE_URL`（未配置 `base_url` 时的兼容回退）、`SUPERMEMORY_CONTAINER_TAG`（覆盖配置）。
 
-Base URL 优先级为 `supermemory.json` → `SUPERMEMORY_BASE_URL` → `https://api.supermemory.ai`。SDK 操作和安装/状态探测都会使用解析后的同一端点。
+Base URL 优先级为 `supermemory.json` → `SUPERMEMORY_BASE_URL` → `https://api.supermemory.ai`。SDK 操作、安装/状态探测和会话导入都会使用解析后的同一端点。
 
 **主要特性：**
 - 自动上下文隔离——从捕获的轮次中剥离已召回的记忆，防止递归记忆污染
-- 逐轮捕获——每轮完成后立即写入，每个会话每 4 小时一个文档
-- 失败的轮次写入会重试（至少一次语义）：下一轮、会话结束、`/reset` 或关闭时
-- 端到端自托管路由——SDK 和探测请求使用同一配置端点
+- 在会话边界时将整个会话**一次性导入**
+- 会话结束时同时导入到对话端点（`/v4/conversations`），用于 Supermemory 的 profile 和图谱构建
+- 端到端自托管路由——SDK、探测和会话导入请求使用同一配置端点
 - 在第一轮及可配置间隔注入 profile 事实
 - **Profile 范围容器**——在 `container_tag` 中使用 `{identity}`（例如 `hermes-{identity}` → `hermes-coder`），按 Hermes profile 隔离记忆
 - **多容器模式**——启用 `enable_custom_container_tags` 并配置 `custom_containers` 列表，让 Agent 跨命名容器读写。自动操作（同步、预取）保持在主容器上。
@@ -546,6 +543,82 @@ Base URL 优先级为 `supermemory.json` → `SUPERMEMORY_BASE_URL` → `https:/
 
 ---
 
+### TencentDB Agent Memory
+
+通过官方 [TencentDB Agent Memory](https://github.com/Tencent/TencentDB-Agent-Memory)
+Gateway 提供四层自托管记忆。Hermes 只承担生命周期和作用域适配；记忆提取、
+检索、调度和存储由 Gateway 负责。
+
+| | |
+|---|---|
+| **适合场景** | 需要明确租户、Agent、用户及会话隔离的 local-first 结构化记忆 |
+| **依赖** | 官方 Node.js Gateway（Node.js 22.16 或更高版本） |
+| **数据存储** | 默认本地 SQLite/sqlite-vec，可选 Tencent VectorDB |
+| **费用** | 自托管免费；模型与可选云数据库费用另计 |
+
+TencentDB Agent Memory 将记忆分为四个原生层级：
+
+- **L0**：Hermes 每轮完成后写入的原始对话证据
+- **L1**：Gateway 异步提取的原子/情景记忆
+- **L2**：场景 Markdown 文件
+- **L3**：合成后的用户核心信息/persona
+
+**工具：** `memory_tencentdb_memory_search`（L1 搜索）、
+`memory_tencentdb_conversation_search`（L0 搜索）、
+`memory_tencentdb_remember`（显式提交持久化 L0）、
+`memory_tencentdb_update` 和 `memory_tencentdb_forget`（按精确 ID 修改 L1）、
+`memory_tencentdb_read_scene`（读取 L2）以及 `memory_tencentdb_profile`（读取 L3）。
+
+先单独准备官方 Gateway：
+
+```bash
+git clone https://github.com/Tencent/TencentDB-Agent-Memory.git
+cd TencentDB-Agent-Memory/MemoryCore
+pnpm install
+pnpm exec tsx src/gateway/server.ts
+```
+
+再激活 Hermes 适配器：
+
+```bash
+hermes config set memory.provider memory_tencentdb
+hermes memory setup
+```
+
+非敏感配置按 profile 保存到 `$HERMES_HOME/memory_tencentdb.json`。连接已经由外部
+启动的 Gateway 时，最小配置为：
+
+```json
+{
+  "endpoint": "http://127.0.0.1:8420",
+  "auto_start": false,
+  "service_id": "default"
+}
+```
+
+可选的 Gateway Bearer token 应写入 `$HERMES_HOME/.env`，环境变量名为
+`MEMORY_TENCENTDB_GATEWAY_API_KEY`。由 Hermes 托管本地 Gateway 时，可通过
+`TDAI_LLM_API_KEY` 提供模型密钥。配置 `gateway_cmd` 后 Hermes 可以监管 sidecar；
+如果 Gateway 由外部启动，Hermes 不会将其关闭。
+
+作用域映射为：`workspace → team_id`、当前 profile → `agent_id`、平台用户 →
+`user_id`、当前对话 → `session_id`、存在时的 Provider task scope → `task_id`。
+L1 召回有意不限定 session，因此新会话可以召回同一 team/agent/user/task 边界内的
+历史持久记忆。
+
+原生各层作用域并不相同：L0 保留 Session/Task，L1 在 team/agent/user/task 内跨 Session
+聚合；上游 L2/L3 则有意按 team/agent 聚合并跨用户共享。如果 L2/L3 也必须在
+用户间隔离，应为不同用户配置不同的 `team_id`。
+
+Hermes 会话结束时，Adapter 会先排空 L0 写入，再调用 Gateway 的
+`POST /session/end` 对该 Session 做定向 flush，完成后才绑定新 Session；不会重启
+Gateway，也不会干扰其他并发 Session。
+
+完整配置、生命周期、离线 smoke 与上游边界参见
+[Provider README](https://github.com/NousResearch/hermes-agent/tree/main/plugins/memory/memory_tencentdb)。
+
+---
+
 ## 提供者对比
 
 | 提供者 | 存储 | 费用 | 工具数 | 依赖 | 独特特性 |
@@ -558,16 +631,18 @@ Base URL 优先级为 `supermemory.json` → `SUPERMEMORY_BASE_URL` → `https:/
 | **RetainDB** | 云端 | $20/月 | 5 | `requests` | 增量压缩 |
 | **ByteRover** | 本地/云端 | 免费/付费 | 3 | `brv` CLI | 预压缩提取 |
 | **Supermemory** | 云端/自托管 | 免费/付费 | 4 | `supermemory` | 上下文隔离 + 会话图谱导入 + 多容器 |
+| **TencentDB Agent Memory** | 自托管/云后端 | 免费/按量 | 7 | Node.js Gateway | 原生 L0–L3 流水线 + 严格租户隔离 |
 
 ## Profile 隔离
 
-每个提供者的数据按 [profile](../profiles.md) 隔离：
+每个提供者的数据按 [profile](/user-guide/profiles) 隔离：
 
 - **本地存储提供者**（Holographic、ByteRover）使用 `$HERMES_HOME/` 路径，各 profile 路径不同
-- **配置文件提供者**（Honcho、Mem0、Hindsight、Supermemory）将配置存储在 `$HERMES_HOME/` 中，每个 profile 拥有独立凭证
+- **配置文件提供者**（Honcho、Mem0、Hindsight、Supermemory、TencentDB Agent Memory）将非敏感配置存储在 `$HERMES_HOME/` 中，每个 profile 拥有独立设置
 - **云端提供者**（RetainDB）自动派生 profile 范围的项目名称
 - **环境变量提供者**（OpenViking）通过每个 profile 的 `.env` 文件配置
+- **租户作用域提供者**（TencentDB Agent Memory）还会在每次 Gateway 操作中发送 workspace、profile、user 与 session 标识
 
 ## 构建记忆提供者
 
-参见[开发者指南：Memory Provider 插件](../../developer-guide/memory-provider-plugin.md)了解如何创建自己的提供者。
+参见[开发者指南：Memory Provider 插件](/developer-guide/memory-provider-plugin)了解如何创建自己的提供者。

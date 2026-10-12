@@ -5,19 +5,17 @@ import './lib/forceTruecolor.js'
 
 import type { FrameEvent } from '@hermes/ink'
 
-import { setRpcErrorLogSink } from './app/userMessages.js'
-import { DASHBOARD_TUI_MODE, NATIVE_MODE, TERMUX_TUI_MODE } from './config/env.js'
+import { DASHBOARD_TUI_MODE, TERMUX_TUI_MODE } from './config/env.js'
 import { GatewayClient } from './gatewayClient.js'
-import { messages } from './i18n/runtime.js'
 import { setupGracefulExit } from './lib/gracefulExit.js'
 import { formatBytes, type HeapDumpResult, performHeapDump } from './lib/memory.js'
 import { type MemorySnapshot, startMemoryMonitor } from './lib/memoryMonitor.js'
 import { openExternalUrl } from './lib/openExternalUrl.js'
 import { recordParentLifecycle } from './lib/parentLog.js'
-import { clearNativeTuiFrame, resetTerminalModes } from './lib/terminalModes.js'
+import { resetTerminalModes } from './lib/terminalModes.js'
 
 if (!process.stdin.isTTY) {
-  console.log(messages().chatBits.entry.noTty)
+  console.log('hermes-tui: no TTY')
   process.exit(0)
 }
 
@@ -39,16 +37,12 @@ resetTerminalModes()
 // graceful-exit cleanups is safe.
 process.on('exit', () => {
   resetTerminalModes()
-
-  if (NATIVE_MODE) {
-    clearNativeTuiFrame()
-  }
 })
 
 // Desktop terminals benefit from a clean startup slate because the TUI usually
 // runs in AlternateScreen. On Termux we keep prior output intact so users can
 // review/copy earlier assistant replies after reopening the app.
-if (TERMUX_TUI_MODE || NATIVE_MODE) {
+if (TERMUX_TUI_MODE) {
   process.stdout.write('\n')
 } else {
   process.stdout.write('\x1b[2J\x1b[H\x1b[3J')
@@ -56,17 +50,10 @@ if (TERMUX_TUI_MODE || NATIVE_MODE) {
 
 const gw = new GatewayClient()
 
-// describeRpcError replaces raw wire errors with plain copy; keep the original in /logs.
-setRpcErrorLogSink(line => gw.recordLog(line))
 gw.start()
 
-// Resolved at call time (never at import) so a locale installed later applies.
 const dumpNotice = (snap: MemorySnapshot, dump: HeapDumpResult | null) =>
-  `${messages().chatBits.entry.memoryDump(
-    snap.level,
-    formatBytes(snap.heapUsed),
-    dump?.heapPath ?? dump?.diagPath ?? messages().chatBits.entry.dumpFailed
-  )}\n`
+  `hermes-tui: ${snap.level} memory (${formatBytes(snap.heapUsed)}) — auto heap dump → ${dump?.heapPath ?? dump?.diagPath ?? '(failed)'}\n`
 
 let consecutiveDeadStreamErrors = 0
 
@@ -136,7 +123,7 @@ const stopMemoryMonitor = startMemoryMonitor({
       `hermes-tui lifecycle: memory critical exit heap=${formatBytes(snap.heapUsed)} rss=${formatBytes(snap.rss)}\n`
     )
     process.stderr.write(dumpNotice(snap, dump))
-    process.stderr.write(`${messages().chatBits.entry.exitingOom}\n`)
+    process.stderr.write('hermes-tui: exiting to avoid OOM; restart to recover\n')
     process.exit(137)
   },
   onHigh: (snap, dump) => process.stderr.write(dumpNotice(snap, dump)),
@@ -148,7 +135,9 @@ const stopMemoryMonitor = startMemoryMonitor({
     recordParentLifecycle(
       `memory-warning fast heap growth heap=${formatBytes(snap.heapUsed)} rss=${formatBytes(snap.rss)}`
     )
-    process.stderr.write(`${messages().chatBits.entry.heapClimbing(formatBytes(snap.heapUsed))}\n`)
+    process.stderr.write(
+      `hermes-tui: heap climbing fast (${formatBytes(snap.heapUsed)}) — a large tool output or long session may be straining memory\n`
+    )
   }
 })
 

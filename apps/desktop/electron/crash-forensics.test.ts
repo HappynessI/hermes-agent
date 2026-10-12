@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  describeCrashReason,
-  installCrashForensics,
-  isExpectedTransition,
-  markExpectedTransition
-} from './crash-forensics'
+import { describeCrashReason, installCrashForensics } from './crash-forensics'
 
 const harness = () => {
   const listeners = new Map<string, (value: unknown) => void>()
@@ -54,7 +49,7 @@ describe('installCrashForensics', () => {
 
     listeners.get('uncaughtException')?.(error)
 
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Error: renderer gone\n    at main'))
+    expect(log).toHaveBeenCalledWith('[main] Uncaught exception: Error: renderer gone\n    at main')
     expect(flush).toHaveBeenCalledTimes(1)
   })
 
@@ -63,39 +58,13 @@ describe('installCrashForensics', () => {
 
     listeners.get('unhandledRejection')?.('gateway ticket mint failed')
 
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('gateway ticket mint failed'))
+    expect(log).toHaveBeenCalledWith('[main] Unhandled rejection: gateway ticket mint failed')
     expect(flush).toHaveBeenCalledTimes(1)
   })
 
-  it('records a marked quit sentinel as a one-line expected transition, not a crash stack', () => {
-    const { flush, listeners, log } = harness()
+  it('registers both handlers', () => {
+    const { listeners } = harness()
 
-    // The exact shape an intentional quit leaves behind: the AbortController
-    // reason from local-backend-lifecycle rejecting an in-flight start.
-    const sentinel = markExpectedTransition(new Error('Hermes Desktop is quitting.'))
-    sentinel.stack =
-      'Error: Hermes Desktop is quitting.\n    at Object.run [as shutdown] (file:///app.asar/dist/electron-main.mjs:1374:40)'
-
-    listeners.get('unhandledRejection')?.(sentinel)
-
-    expect(log).toHaveBeenCalledTimes(1)
-    const message = log.mock.calls[0]?.[0] as string
-    expect(message).toContain('expected shutdown transition')
-    expect(message).toContain('Hermes Desktop is quitting.')
-    // No stack frames: the line must not read as a crash in desktop.log.
-    expect(message).not.toContain('electron-main.mjs')
-    expect(flush).toHaveBeenCalledTimes(1)
-  })
-
-  it('marks only stamped errors — a same-message unmarked error still renders its stack', () => {
-    const { listeners, log } = harness()
-
-    const lookalike = new Error('Hermes Desktop is quitting.')
-    lookalike.stack = 'Error: Hermes Desktop is quitting.\n    at main'
-
-    listeners.get('unhandledRejection')?.(lookalike)
-
-    expect(isExpectedTransition(lookalike)).toBe(false)
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('at main'))
+    expect([...listeners.keys()].sort()).toEqual(['uncaughtException', 'unhandledRejection'])
   })
 })

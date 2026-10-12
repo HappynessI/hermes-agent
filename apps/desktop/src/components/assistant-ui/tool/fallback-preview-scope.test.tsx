@@ -4,9 +4,8 @@ import type { ComponentProps, ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { type SessionView, SessionViewProvider } from '@/app/chat/session-view'
-import type { ChatMessage } from '@/lib/chat-messages'
 import { $previewStatusBySession } from '@/store/preview-status'
-import { $activeSessionId, $currentCwd, $messages } from '@/store/session'
+import { $activeSessionId, $currentCwd } from '@/store/session'
 
 vi.mock('@assistant-ui/react', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -18,27 +17,24 @@ const { ToolFallback } = await import('./fallback')
 
 const PRIMARY_ID = 'primary-session'
 const TILE_ID = 'tile-session'
-const messages: ChatMessage[] = [{ id: 'msg-1', role: 'assistant', parts: [] }]
 
 /** Minimal tile view: only the fields the tool row reads. */
 function tileView(): SessionView {
   return {
     ...({} as SessionView),
     $cwd: atom('/tile/work'),
-    $messages: atom(messages),
+    $messages: atom([]),
     $runtimeId: atom<null | string>(TILE_ID),
-    $storedId: atom<null | string>(null),
     kind: 'tile'
   }
 }
 
-function renderToolRow(wrap: (node: ReactNode) => ReactNode, overrides: Record<string, unknown> = {}) {
+function renderToolRow(wrap: (node: ReactNode) => ReactNode) {
   const props = {
     args: { path: '/tile/work/report.html' },
     result: { path: '/tile/work/report.html' },
     toolCallId: 'call-1',
-    toolName: 'write_file',
-    ...overrides
+    toolName: 'write_file'
   } as unknown as ComponentProps<typeof ToolFallback>
 
   render(<>{wrap(<ToolFallback {...props} />)}</>)
@@ -49,7 +45,6 @@ afterEach(() => {
   $previewStatusBySession.set({})
   $activeSessionId.set(null)
   $currentCwd.set('')
-  $messages.set([])
 })
 
 describe('tool row preview recording', () => {
@@ -73,36 +68,9 @@ describe('tool row preview recording', () => {
   it('still records into the primary session for the main chat', () => {
     $activeSessionId.set(PRIMARY_ID)
     $currentCwd.set('/primary/work')
-    $messages.set(messages)
 
     renderToolRow(node => node)
 
     expect(Object.keys($previewStatusBySession.get())).toEqual([PRIMARY_ID])
-  })
-
-  it('does not promote reads, failed writes or packaged renderer URLs into artifacts', () => {
-    $activeSessionId.set(PRIMARY_ID)
-    $messages.set(messages)
-
-    for (const overrides of [
-      { toolName: 'read_file' },
-      { isError: true, result: { error: 'Permission denied' } },
-      { args: { path: '/work/missing.html' }, result: undefined },
-      { result: { preview: 'file:///opt/Hermes/resources/app.asar/dist/index.html' } }
-    ]) {
-      renderToolRow(node => node, overrides)
-      expect($previewStatusBySession.get()[PRIMARY_ID]).toBeUndefined()
-      cleanup()
-    }
-
-    renderToolRow(node => node)
-    expect($previewStatusBySession.get()[PRIMARY_ID]).toHaveLength(1)
-  })
-
-  it('does not register a previous conversation row under the newly selected chat', () => {
-    $activeSessionId.set('next-conversation')
-    $messages.set([{ id: 'next-message', role: 'assistant', parts: [] }])
-    renderToolRow(node => node)
-    expect($previewStatusBySession.get()['next-conversation']).toBeUndefined()
   })
 })

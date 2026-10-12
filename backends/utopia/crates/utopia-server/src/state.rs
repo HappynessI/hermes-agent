@@ -1,0 +1,138 @@
+use sqlx::PgPool;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+use utopia_core::config::AppConfig;
+use utopia_search::SearchIndex;
+use uuid::Uuid;
+
+/// 服务内事件（SSE 推送给前端做局部刷新）。
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct AppEvent {
+    /// None = 不属于任何库。告警的角标是跨库的，而系统级告警根本没有库
+    pub kb_id: Option<Uuid>,
+    /// document = 文档摄入/抽取状态变化；review = 审核队列变化；
+    /// alert = 告警中心有变动
+    pub kind: &'static str,
+    pub document_id: Option<Uuid>,
+}
+
+#[derive(Clone)]
+pub struct AppState {
+    pub pool: PgPool,
+    pub jwt_secret: String,
+    pub search: Arc<SearchIndex>,
+    /// Charter（内置文档）内存索引：chat 的 search_docs 工具用
+    pub docs: Arc<utopia_search::DocsIndex>,
+    /// 原始文件字节的存取接缝（内容寻址，key = sha256）；当前实现为本地磁盘
+    pub blob: Arc<dyn crate::blob::BlobStore>,
+    pub open_registration: bool,
+    /// 强制 Secure cookie（配置项）；未强制时按请求的 X-Forwarded-Proto 逐次判定
+    pub cookie_secure: bool,
+    /// 分块预算，见 `AppConfig::chunk_tokens`
+    pub chunk_tokens: usize,
+    /// 见 `AppConfig::extract_known_in_prompt`
+    pub extract_known_in_prompt: bool,
+    /// worker 并发数：调度循环每轮热读——系统设置改动即时生效
+    pub worker_concurrency: Arc<std::sync::atomic::AtomicUsize>,
+    /// 各工作区的对话客户端。端点报过的上下文窗口记在客户端上，留着它下一轮才记得（#964）
+    pub chat_clients: Arc<crate::llm_util::ConversationClients>,
+    /// 按模型的并发闸门：后台任务调 LLM 前取许可。限额存库，改完即时生效
+    pub model_gates: Arc<crate::llm_util::ModelGates>,
+    pub events: broadcast::Sender<AppEvent>,
+    /// 正在生成的回答，按会话查。**刷新页面之后还能接上**（见 `live`）
+    pub live: Arc<crate::live::Registry>,
+}
+
+impl AppState {
+    /// `jwt_secret` 由入口解析：环境变量给了就是它，否则是库里那条（首启时生成）。
+    /// 不从 cfg 里取，是因为到这一步它必须已经是确定的一个值，而不是 Option。
+    pub fn new(
+        pool: PgPool,
+        cfg: &AppConfig,
+        search: Arc<SearchIndex>,
+        jwt_secret: String,
+    ) -> Self {
+        let (events, _) = broadcast::channel(256);
+        let data_dir = PathBuf::from(&cfg.data_dir);
+        let blob = Arc::new(crate::blob::LocalBlobStore::new(data_dir.join("files")));
+        Self {
+            pool,
+            jwt_secret,
+            search,
+            docs: Arc::new(crate::docs_corpus::build_index()),
+            blob,
+            open_registration: cfg.open_registration,
+            cookie_secure: cfg.cookie_secure,
+            chunk_tokens: cfg.chunk_tokens,
+            extract_known_in_prompt: cfg.extract_known_in_prompt,
+            // 与 `deployment_settings.worker_concurrency` 的列缺省保持一致（迁移 0011）：
+            // access::worker_concurrency 的「行不存在」兜底是 64，main.rs 的「函数本身
+            // 报错」兜底也是 64——这是**服务起来后第一次读这个值之前**的值，写错了
+            // 就意味着服务启动那一小会儿跑的是迁移 0011 想避免的并发不足。
+            worker_concurrency: Arc::new(std::sync::atomic::AtomicUsize::new(64)),
+            chat_clients: Arc::new(crate::llm_util::ConversationClients::default()),
+            model_gates: Arc::new(crate::llm_util::ModelGates::default()),
+            events,
+            live: Arc::new(crate::live::Registry::default()),
+        }
+    }
+
+    /// 无订阅者时 send 返回 Err——正常情况，静默忽略。
+    pub fn emit_document(&self, kb_id: Uuid, document_id: Uuid) {
+        let _ = self.events.send(AppEvent {
+            kb_id: Some(kb_id),
+            kind: "document",
+            document_id: Some(document_id),
+        });
+    }
+
+    pub fn emit_review(&self, kb_id: Uuid) {
+        let _ = self.events.send(AppEvent {
+            kb_id: Some(kb_id),
+            kind: "review",
+            document_id: None,
+        });
+    }
+
+    /// 一句记忆抽出了等人点头的事实（0015）。对话里那张确认卡按这个刷新——
+    /// 抽取是异步的，卡片只能在任务完成时长出来，而不是在助手回话的那一刻
+    pub fn emit_pending(&self, kb_id: Uuid) {
+        let _ = self.events.send(AppEvent {
+            kb_id: Some(kb_id),
+            kind: "pending",
+            document_id: None,
+        });
+    }
+
+    /// 图变了。推理往图里加过边之后要发一次——它不经过文档管道，
+    /// 而 `document` 那条事件是文档管道专用的
+    pub fn emit_graph(&self, kb_id: Uuid) {
+        let _ = self.events.send(AppEvent {
+            kb_id: Some(kb_id),
+            kind: "graph",
+            document_id: None,
+        });
+    }
+
+    pub fn emit_source(&self, kb_id: Uuid) {
+        let _ = self.events.send(AppEvent {
+            kb_id: Some(kb_id),
+            kind: "source",
+            document_id: None,
+        });
+    }
+
+    /// 告警有变动。**不带任何数据，也不判权限**——收到的人一律重取列表，
+    /// 而"谁能看见什么"在列表查询里判且只判一次。
+    ///
+    /// 代价是没权限的人也会被叫醒重取一次，拿到的仍是空。换来的是推送这条路上
+    /// 一行权限逻辑都没有，不存在"推送和列表判得不一样"这种漏。
+    pub fn emit_alert(&self) {
+        let _ = self.events.send(AppEvent {
+            kb_id: None,
+            kind: "alert",
+            document_id: None,
+        });
+    }
+}

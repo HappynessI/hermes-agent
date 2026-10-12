@@ -1,5 +1,4 @@
 import { LONG_MSG } from '../config/limits.js'
-import { t } from '../i18n/runtime.js'
 import { buildToolTrailLine } from '../lib/text.js'
 import type { Msg, SessionInfo } from '../types.js'
 
@@ -14,7 +13,7 @@ export const userDisplay = (text: string) => {
   const words = first.split(/\s+/).filter(Boolean)
   const prefix = (words.length > 1 ? words.slice(0, 4).join(' ') : first).slice(0, 80)
 
-  return t('libText.messages.longMessage', prefix || t('libText.messages.messageFallback'))
+  return `${prefix || '(message)'} [long message]`
 }
 
 export const toTranscriptMessages = (rows: unknown): Msg[] => {
@@ -30,10 +29,7 @@ export const toTranscriptMessages = (rows: unknown): Msg[] => {
       continue
     }
 
-    const { context, display_kind, name, role, text, timestamp } = row as TranscriptRow
-
-    const createdAt =
-      typeof timestamp === 'number' && Number.isFinite(timestamp) && timestamp > 0 ? timestamp : undefined
+    const { context, display_kind, name, role, text } = row as TranscriptRow
 
     if (role === 'tool') {
       pending.push(buildToolTrailLine(name ?? 'tool', context ?? ''))
@@ -52,57 +48,39 @@ export const toTranscriptMessages = (rows: unknown): Msg[] => {
     }
 
     if (display_kind === 'model_switch') {
-      out.push({ kind: 'event', role: 'system', text: t('libText.messages.modelChanged') })
+      out.push({ kind: 'event', role: 'system', text: 'model changed' })
       pending = []
 
       continue
     }
 
     if (display_kind === 'auto_continue') {
-      out.push({ kind: 'event', role: 'system', text: t('libText.messages.resumedInterruptedTurn') })
+      out.push({ kind: 'event', role: 'system', text: 'resumed interrupted turn' })
       pending = []
 
       continue
     }
 
-    if (display_kind === 'personality_switch') {
-      out.push({ kind: 'event', role: 'system', text: t('libText.messages.personalityChanged') })
-      pending = []
-
-      continue
-    }
-
-    if (display_kind === 'async_delegation_complete' || display_kind === 'process_complete') {
+    if (display_kind === 'async_delegation_complete') {
       const meta = (row as TranscriptRow).display_metadata
       const count = meta && typeof meta.task_count === 'number' ? meta.task_count : undefined
 
       const label =
-        display_kind === 'process_complete'
-          ? t('libText.messages.backgroundProcessFinished')
-          : count === undefined
-            ? t('libText.messages.backgroundAgentWorkFinished')
-            : t(
-                count === 1
-                  ? 'libText.messages.backgroundAgentsFinishedOne'
-                  : 'libText.messages.backgroundAgentsFinishedOther',
-                count
-              )
+        count === undefined
+          ? 'background agent work finished'
+          : `${count} background agent${count === 1 ? '' : 's'} finished`
 
-      out.push({
-        kind: 'event',
-        role: 'system',
-        text: typeof meta?.display_text === 'string' ? meta.display_text : label
-      })
+      out.push({ kind: 'event', role: 'system', text: label })
       pending = []
 
       continue
     }
 
     if (role === 'assistant') {
-      out.push({ role, text, ...(createdAt !== undefined && { createdAt }), ...(pending.length && { tools: pending }) })
+      out.push({ role, text, ...(pending.length && { tools: pending }) })
       pending = []
     } else if (role === 'user' || role === 'system') {
-      out.push({ role, text, ...(createdAt !== undefined && { createdAt }) })
+      out.push({ role, text })
       pending = []
     }
   }
@@ -126,5 +104,4 @@ interface TranscriptRow {
   name?: string
   role?: string
   text?: string
-  timestamp?: number
 }

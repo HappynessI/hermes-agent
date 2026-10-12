@@ -8,9 +8,10 @@ mirrors the Telegram/WeCom/Feishu pattern.
 Batch delays are read from ``config.extra`` (config.yaml), not env vars.
 """
 
+import asyncio
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.event import MessageEvent, MessageType
+from gateway.platforms.base import MessageEvent, MessageType
 from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
 from gateway.session import SessionSource
 
@@ -34,11 +35,11 @@ def _event(text):
 
 def test_batch_delays_overridden_via_config_extra():
     adapter = _make_adapter(
-        text_batch_delay_seconds="1.5",
-        text_batch_split_delay_seconds=3,
+        text_batch_delay_seconds="2.5",
+        text_batch_split_delay_seconds=7,
     )
-    assert adapter._text_batch_delay_seconds == 1.5
-    assert adapter._text_batch_split_delay_seconds == 3.0
+    assert adapter._text_batch_delay_seconds == 2.5
+    assert adapter._text_batch_split_delay_seconds == 7.0
 
 
 def test_invalid_config_value_falls_back_to_default():
@@ -46,8 +47,7 @@ def test_invalid_config_value_falls_back_to_default():
         text_batch_delay_seconds="garbage",
         text_batch_split_delay_seconds=-3,
     )
-    default = _make_adapter()
-    assert adapter._text_batch_delay_seconds == default._text_batch_delay_seconds
-    assert adapter._text_batch_split_delay_seconds == default._text_batch_split_delay_seconds
+    assert adapter._text_batch_delay_seconds == 5.0
+    assert adapter._text_batch_split_delay_seconds == 10.0
 
 

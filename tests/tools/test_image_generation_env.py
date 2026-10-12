@@ -42,4 +42,5 @@ def test_image_generate_tool_returns_actionable_error_when_no_backend(monkeypatc
     )
 
     assert result["success"] is False
-    assert result["error"]
+    assert "https://fal.ai" in result["error"]
+    assert "FAL_KEY" in result["error"]

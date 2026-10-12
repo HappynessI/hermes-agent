@@ -1,49 +1,25 @@
-import { parseCommandDispatch, parseSlashCommand } from '@hermes/shared/slash'
-
-import type { GatewayClient } from '../gatewayClient.js'
+import { parseSlashCommand } from '../domain/slash.js'
 import type { SlashExecResponse } from '../gatewayTypes.js'
-import { rpcErrorMessage } from '../lib/rpc.js'
+import { asCommandDispatch, rpcErrorMessage } from '../lib/rpc.js'
 import { launchWidget } from '../sdk/host.js'
 import { getWidgetApp } from '../sdk/registry.js'
 
 import type { SlashHandlerContext } from './interfaces.js'
-import { scoreSlashMenuItem } from './slash/fuzzyScore.js'
 import { findSlashCommand } from './slash/registry.js'
 import type { SlashRunCtx } from './slash/types.js'
 import { getUiState } from './uiStore.js'
-import { describeSlashExecError, shouldFallbackToDispatch } from './userMessages.js'
 
-/** Shared metrics count each user-typed command once, from the client: the gateway no longer
- *  counts slash.exec, so locally handled commands (/resume, /skin, overlays) land too.
- *  Fire-and-forget; the backend canonicalizes the raw name. */
-export function reportSlashCommand(gw: GatewayClient, name: string, sid: null | string | undefined): void {
-  if (name) {
-    gw.request('shared_metrics.slash_command', { command: name, ...(sid ? { session_id: sid } : {}) }).catch(
-      () => undefined
-    )
-  }
-}
-
-/** `typed` is false for programmatic calls (a picker re-issuing `/model <x>`) and for the
- *  backend's alias re-dispatch; prefix/alias expansion keeps it, so a typed `/hea` counts once
- *  as the /heartbeat it resolved to. */
-export function createSlashHandler(ctx: SlashHandlerContext): (cmd: string, typed?: boolean) => boolean {
+export function createSlashHandler(ctx: SlashHandlerContext): (cmd: string) => boolean {
   const { gw } = ctx.gateway
   const { catalog } = ctx.local
   const { page, send, sys } = ctx.transcript
 
-  const handler = (cmd: string, typed = true): boolean => {
+  const handler = (cmd: string): boolean => {
     const flight = ++ctx.slashFlightRef.current
     const ui = getUiState()
     const sid = ui.sid
     const parsed = parseSlashCommand(cmd)
     const argTail = parsed.arg ? ` ${parsed.arg}` : ''
-
-    const countTyped = () => {
-      if (typed) {
-        reportSlashCommand(gw, parsed.name, sid)
-      }
-    }
 
     const stale = () => flight !== ctx.slashFlightRef.current || getUiState().sid !== sid
 
@@ -66,7 +42,6 @@ export function createSlashHandler(ctx: SlashHandlerContext): (cmd: string, type
     const found = findSlashCommand(parsed.name)
 
     if (found) {
-      countTyped()
       found.run(parsed.arg, runCtx, cmd)
 
       return true
@@ -76,7 +51,6 @@ export function createSlashHandler(ctx: SlashHandlerContext): (cmd: string, type
     // command table was built (user widgets from $HERMES_HOME/tui-widgets,
     // /widgets-reload) dispatch straight off the live registry.
     if (getWidgetApp(parsed.name)) {
-      countTyped()
       const err = launchWidget(parsed.name, parsed.arg)
 
       if (err) {
@@ -92,25 +66,19 @@ export function createSlashHandler(ctx: SlashHandlerContext): (cmd: string, type
 
       if (exact) {
         if (exact.toLowerCase() !== needle) {
-          return handler(`${exact}${argTail}`, typed)
+          return handler(`${exact}${argTail}`)
         }
       } else {
-        // Tiered name scoring (ported from grok-cli's slash menu): prefix
-        // matches rank above substring matches, so `/hea` still resolves to
-        // /heartbeat while `/beat` now finds it too instead of dead-ending.
-        // Only the best tier survives — a substring hit never widens an
-        // unambiguous prefix hit into an "ambiguous command" complaint.
-        // Description tiers (score >= 3) are a completion-menu concern and
-        // never auto-execute a command here.
-        const scored = Object.entries(catalog.canon)
-          .map(([alias, canon]) => ({ canon, score: scoreSlashMenuItem({ id: alias.slice(1) }, needle.slice(1)) }))
-          .filter(entry => entry.score < 3)
-
-        const best = Math.min(...scored.map(entry => entry.score))
-        const matches = [...new Set(scored.filter(entry => entry.score === best).map(entry => entry.canon))]
+        const matches = [
+          ...new Set(
+            Object.entries(catalog.canon)
+              .filter(([alias]) => alias.startsWith(needle))
+              .map(([, canon]) => canon)
+          )
+        ]
 
         if (matches.length === 1 && matches[0]!.toLowerCase() !== needle) {
-          return handler(`${matches[0]}${argTail}`, typed)
+          return handler(`${matches[0]}${argTail}`)
         }
 
         if (matches.length > 1) {
@@ -122,7 +90,7 @@ export function createSlashHandler(ctx: SlashHandlerContext): (cmd: string, type
     }
 
     const handleDispatch = (raw: unknown): void => {
-      const d = parseCommandDispatch(raw)
+      const d = asCommandDispatch(raw)
 
       if (!d) {
         return sys('error: invalid response: command.dispatch')
@@ -133,7 +101,7 @@ export function createSlashHandler(ctx: SlashHandlerContext): (cmd: string, type
       }
 
       if (d.type === 'alias') {
-        return void handler(`/${d.target}${argTail}`, false)
+        return void handler(`/${d.target}${argTail}`)
       }
 
       // A skill/bundle dispatch's `message` is the expanded skill body —
@@ -176,14 +144,13 @@ export function createSlashHandler(ctx: SlashHandlerContext): (cmd: string, type
       }
     }
 
-    countTyped()
     gw.request<SlashExecResponse>('slash.exec', { command: cmd.slice(1), session_id: sid })
       .then(r => {
         if (stale()) {
           return
         }
 
-        if (parseCommandDispatch(r)) {
+        if (asCommandDispatch(r)) {
           return handleDispatch(r)
         }
 
@@ -193,20 +160,7 @@ export function createSlashHandler(ctx: SlashHandlerContext): (cmd: string, type
 
         long ? page(text, parsed.name[0]!.toUpperCase() + parsed.name.slice(1)) : sys(text)
       })
-      .catch((execErr: unknown) => {
-        // Only "slash.exec does not own this command" refusals (4011/4018) may
-        // fall through to command.dispatch. A helper timeout/crash (5030) must
-        // be shown as itself — the fallback's "not a quick/plugin/bundle/skill
-        // command" refusal used to bury the real cause and imply the command
-        // did not exist.
-        if (!shouldFallbackToDispatch(execErr)) {
-          if (!stale()) {
-            sys(`error: ${describeSlashExecError(parsed.name, execErr)}`)
-          }
-
-          return
-        }
-
+      .catch(() => {
         gw.request('command.dispatch', { arg: parsed.arg, name: parsed.name, session_id: sid })
           .then((raw: unknown) => {
             if (stale()) {

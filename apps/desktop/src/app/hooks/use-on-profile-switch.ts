@@ -8,17 +8,16 @@ import { $activeGatewayProfile } from '@/store/profile'
  *  when the backend the app talks to swaps underneath a still-mounted view. */
 export function useOnProfileSwitch(onSwitch: () => void): void {
   const profile = useStore($activeGatewayProfile)
-  const previousProfile = useRef(profile)
+  const first = useRef(true)
 
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
-    // StrictMode replays mount effects without changing the profile. Counting
-    // effect runs would clear a seeded settings draft and leave it loading.
-    if (previousProfile.current === profile) {
+    if (first.current) {
+      first.current = false
+
       return
     }
 
-    previousProfile.current = profile
     onSwitch()
     // Fire on profile change only; onSwitch identity is intentionally ignored.
     // eslint-disable-next-line react-hooks/exhaustive-deps

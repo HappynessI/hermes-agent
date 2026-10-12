@@ -1,17 +1,9 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandItemCheck,
-  CommandList
-} from '@/components/ui/command'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { HermesGitBaseBranch } from '@/global'
 import { useI18n } from '@/i18n'
@@ -43,59 +35,41 @@ export function BaseBranchPicker({
 
   const currentBranch = repoStatus?.detached ? null : (repoStatus?.branch ?? null)
 
-  // List the repo once per mount/repo (#119745): an empty list is a real
-  // answer (a folder git cannot list, an unborn HEAD, a backend without the
-  // endpoint) and a failed list is a real failure — neither may re-trigger
-  // the load, or a non-git folder re-runs the bridge in a loop while the
-  // dialog is open. The cleanup ignores a list that lands after the picker
-  // moved to another repo or unmounted, so a late list can neither paint the
-  // previous repo's branches nor set this repo's base.
-  useEffect(() => {
-    let active = true
-    setBranches([])
-
+  const load = useCallback(async () => {
     if (!repoPath) {
-      return () => {
-        active = false
-      }
+      return
     }
 
     setLoading(true)
-    listBaseBranches(repoPath)
-      .then(list => {
-        if (active) {
-          setBranches(list)
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setBranches([])
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false)
-        }
-      })
 
-    return () => {
-      active = false
+    try {
+      const list = await listBaseBranches(repoPath)
+      setBranches(list)
+
+      // Default to the remote default (origin/HEAD). Fall back to the local
+      // default branch (main/master) when no remote exists. The value is
+      // always a concrete branch — never undefined.
+      const defaultBranch = list.find(b => b.isDefault)
+
+      if (defaultBranch) {
+        onValueChange(defaultBranch.name)
+      } else {
+        onValueChange(list[0]?.name ?? '')
+      }
+    } catch {
+      setBranches([])
+    } finally {
+      setLoading(false)
     }
-  }, [repoPath])
+  }, [repoPath, onValueChange])
 
-  // Default to the remote default (origin/HEAD). Fall back to the local
-  // default branch (main/master) when no remote exists. Only an EMPTY value
-  // is filled (#119745): the base the caller chose ("Branch off from
-  // <current>" in the coding row's kebab) stands even though it is not the
-  // default. Runs on the settled list, never inside the load, so a stale
-  // response cannot set another project's base.
-  const fallback = (branches.find(b => b.isDefault) ?? branches[0])?.name
-
+  // Load on mount so the default branch fills in before the user opens the
+  // popover — otherwise the button reads "branch off " with nothing after it.
   useEffect(() => {
-    if (!value && fallback) {
-      onValueChange(fallback)
+    if (branches.length === 0 && !loading) {
+      void load()
     }
-  }, [fallback, onValueChange, value])
+  }, [branches.length, loading, load])
 
   // Pin the current session's branch to the top, keep the rest in git's
   // most-recently-committed order.
@@ -121,6 +95,10 @@ export function BaseBranchPicker({
     <div className="space-y-1.5">
       <Popover
         onOpenChange={next => {
+          if (next && branches.length === 0 && !loading) {
+            void load()
+          }
+
           setOpen(next)
         }}
         open={open}
@@ -141,17 +119,10 @@ export function BaseBranchPicker({
             <span className="shrink-0">{parts.after}</span>
           </Button>
         </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          className="z-(--z-modal-popover) min-w-(--radix-popover-trigger-width)"
-          variant="menu"
-        >
-          <Command
-            filter={(searchValue, search) => (searchValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}
-            variant="menu"
-          >
+        <PopoverContent align="start" className="z-(--z-modal-popover) min-w-(--radix-popover-trigger-width) p-0">
+          <Command filter={(searchValue, search) => (searchValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}>
             <CommandInput autoFocus placeholder={p.baseBranchPlaceholder} />
-            <CommandList>
+            <CommandList className="max-h-64">
               <CommandEmpty>{p.baseBranchNone}</CommandEmpty>
               <CommandGroup>
                 {sorted.map(branch => (
@@ -163,14 +134,20 @@ export function BaseBranchPicker({
                     }}
                     value={branch.name}
                   >
-                    <Codicon
-                      className="shrink-0 text-(--ui-text-tertiary)"
-                      name={branch.isRemote ? 'repo' : 'git-branch'}
-                      size="0.8rem"
-                    />
-                    <span className="truncate">{branch.name}</span>
-                    {branch.isDefault && <span className="shrink-0 text-[0.625rem] text-(--ui-text-tertiary)">★</span>}
-                    <CommandItemCheck checked={value === branch.name} />
+                    <div className="flex items-center justify-start gap-1.5">
+                      <Codicon
+                        className="shrink-0 text-(--ui-text-tertiary)"
+                        name={branch.isRemote ? 'repo' : 'git-branch'}
+                        size="0.8rem"
+                      />
+                      {branch.isDefault && (
+                        <span className="ml-auto shrink-0 text-[0.625rem] text-(--ui-text-tertiary)">★</span>
+                      )}
+                      <span className="truncate">{branch.name}</span>
+                      {value === branch.name && (
+                        <Codicon className="ml-auto shrink-0 text-(--ui-accent)" name="check" size="0.8rem" />
+                      )}
+                    </div>
                   </CommandItem>
                 ))}
               </CommandGroup>

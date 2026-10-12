@@ -281,7 +281,7 @@ def monitor_job(ip: str, ssh_key_path: str, log_file: str = "train.log"):
 ### Slurm job submission
 
 ```bash
-#!/usr/bin/env bash
+#!/bin/bash
 #SBATCH --job-name=llm-training
 #SBATCH --nodes=4
 #SBATCH --ntasks-per-node=8

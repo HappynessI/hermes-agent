@@ -7,14 +7,12 @@ import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { SearchField } from '@/components/ui/search-field'
+import { SegmentedControl } from '@/components/ui/segmented-control'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Slider } from '@/components/ui/slider'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { Download, Loader2, PawPrint, Pencil, Trash2 } from '@/lib/icons'
-import { isSubmitEnter } from '@/lib/ime'
 import { selectableCardClass } from '@/lib/selectable-card'
 import { cn } from '@/lib/utils'
 import { $petInfo, $petRoam, setPetRoam } from '@/store/pet'
@@ -39,7 +37,7 @@ import {
 } from '@/store/pet-gallery'
 import { $gatewayState } from '@/store/session'
 
-import { ListRow, SectionHeading, ToggleRow } from './primitives'
+import { ListRow, SectionHeading } from './primitives'
 
 /**
  * Appearance opt-in for the floating petdex mascot. A thin view over the shared
@@ -117,7 +115,7 @@ export function PetSettings() {
 
   return (
     <div>
-      <SectionHeading icon={PawPrint} page title={copy.title} />
+      <SectionHeading icon={PawPrint} title={copy.title} />
       <p className="max-w-2xl text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
         {copy.intro}
       </p>
@@ -129,14 +127,14 @@ export function PetSettings() {
       )}
 
       <div className="mt-2">
-        <ToggleRow
+        <ListRow
           below={
             <>
-              <SearchField
-                containerClassName="mt-3 w-full"
-                inputClassName="flex-1"
-                onChange={setQuery}
+              <input
+                className="mt-3 w-full rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-3 py-1.5 text-[length:var(--conversation-caption-font-size)] outline-none placeholder:text-(--ui-text-tertiary) focus:border-(--ui-stroke-secondary)"
+                onChange={event => setQuery(event.target.value)}
                 placeholder={copy.searchPlaceholder}
+                spellCheck={false}
                 value={query}
               />
               {/* Fixed-height scroll area so filtering never grows/shrinks the
@@ -254,10 +252,20 @@ export function PetSettings() {
               </p>
             </>
           }
-          checked={enabled}
           description={copy.chooseDesc}
-          label={copy.chooseTitle}
-          onChange={toggle}
+          title={
+            <div className="flex items-center justify-between gap-3">
+              <span>{copy.chooseTitle}</span>
+              <SegmentedControl
+                onChange={id => void toggle(id === 'on')}
+                options={[
+                  { id: 'off', label: copy.off },
+                  { id: 'on', label: copy.on }
+                ]}
+                value={enabled ? 'on' : 'off'}
+              />
+            </div>
+          }
           wide
         />
 
@@ -265,8 +273,9 @@ export function PetSettings() {
           <ListRow
             action={
               <div className="flex items-center gap-3">
-                <Slider
+                <input
                   aria-label={copy.scaleTitle}
+                  className="h-1 w-40 cursor-pointer appearance-none rounded-full bg-(--ui-stroke-tertiary)"
                   max={PET_SCALE_MAX}
                   min={PET_SCALE_MIN}
                   onChange={event => {
@@ -274,6 +283,8 @@ export function PetSettings() {
                     setPetScale(requestGateway, Number(event.target.value))
                   }}
                   step={0.05}
+                  style={{ accentColor: 'var(--dt-primary)' }}
+                  type="range"
                   value={scale}
                 />
                 <span className="w-9 text-right text-[length:var(--conversation-caption-font-size)] tabular-nums text-(--ui-text-tertiary)">
@@ -287,7 +298,23 @@ export function PetSettings() {
         )}
 
         {enabled && (
-          <ToggleRow checked={roam} description={copy.roamDesc} label={copy.roamTitle} onChange={setPetRoam} />
+          <ListRow
+            action={
+              <SegmentedControl
+                onChange={id => {
+                  setPetRoam(id === 'on')
+                  triggerHaptic('crisp')
+                }}
+                options={[
+                  { id: 'off', label: copy.off },
+                  { id: 'on', label: copy.on }
+                ]}
+                value={roam ? 'on' : 'off'}
+              />
+            }
+            description={copy.roamDesc}
+            title={copy.roamTitle}
+          />
         )}
       </div>
 
@@ -324,7 +351,7 @@ export function PetSettings() {
             autoFocus
             onChange={event => setRenameValue(event.target.value)}
             onKeyDown={event => {
-              if (isSubmitEnter(event)) {
+              if (event.key === 'Enter') {
                 event.preventDefault()
                 saveRename()
               }

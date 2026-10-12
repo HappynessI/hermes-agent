@@ -9,12 +9,14 @@ Covers:
 - Config version covers all ENV_VARS_BY_VERSION keys (regression guard)
 """
 
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gateway.config import Platform, PlatformConfig
+from gateway.platforms.base import MessageEvent, MessageType
 
 
 class _AsyncResponseContext:
@@ -71,31 +73,14 @@ class TestConfigYamlBridging:
 # ---------------------------------------------------------------------------
 
 
+class TestAdapterInit:
+    """Test that WhatsAppAdapter reads reply_prefix from config.extra."""
 
-
-class TestBridgeEnvironment:
-    @pytest.mark.parametrize(
-        ("configured", "explicit_env", "expected"),
-        [
-            ("Custom Bot\\n", None, "Custom Bot\\n"),
-            ("", None, ""),
-            ("Config Bot\\n", "Env Bot\\n", "Env Bot\\n"),
-        ],
-    )
-    def test_reply_prefix_reaches_bridge_with_existing_precedence(
-        self, monkeypatch, configured, explicit_env, expected
-    ):
+    def test_reply_prefix_from_extra(self):
         from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-
-        monkeypatch.delenv("WHATSAPP_REPLY_PREFIX", raising=False)
-        if explicit_env is not None:
-            monkeypatch.setenv("WHATSAPP_REPLY_PREFIX", explicit_env)
-
-        adapter = WhatsAppAdapter(
-            PlatformConfig(enabled=True, extra={"reply_prefix": configured})
-        )
-
-        assert adapter._bridge_env()["WHATSAPP_REPLY_PREFIX"] == expected
+        config = PlatformConfig(enabled=True, extra={"reply_prefix": "Bot\\n"})
+        adapter = WhatsAppAdapter(config)
+        assert adapter._reply_prefix == "Bot\\n"
 
 
 class TestReadReceiptPolicyOrdering:

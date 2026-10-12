@@ -1,14 +1,22 @@
-import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_VALUES } from '@hermes/shared'
 import { describe, expect, it } from 'vitest'
 
 import {
+  DEFAULT_REASONING_EFFORT,
+  isReasoningEffort,
   isThinkingEnabled,
-  reasoningEffortClamp,
+  REASONING_EFFORT_VALUES,
+  REASONING_EFFORTS,
   reasoningEffortLabel,
   resolveReasoningEffort
 } from './reasoning-effort'
 
 describe('reasoning-effort', () => {
+  it('keeps the scale ascending and `none` off it', () => {
+    expect(REASONING_EFFORTS).not.toContain('none')
+    expect(REASONING_EFFORT_VALUES[0]).toBe('none')
+    expect(REASONING_EFFORT_VALUES).toHaveLength(REASONING_EFFORTS.length + 1)
+  })
+
   it('labels every level it claims to support', () => {
     for (const effort of REASONING_EFFORT_VALUES) {
       expect(reasoningEffortLabel(effort)).not.toBe('')
@@ -19,15 +27,11 @@ describe('reasoning-effort', () => {
     expect(reasoningEffortLabel('bogus')).toBe('bogus')
   })
 
-  it('labels a route clamp from the gateway wire level only, never by inference', () => {
-    expect(reasoningEffortLabel('ultra', 'max')).toBe('Ultra→Max')
-    expect(reasoningEffortClamp('ultra', 'max')).toEqual({ effort: 'ultra', wire: 'max' })
-    // Unknown ('' — not stamped yet / optimistic pick) or verbatim: plain label, no claim.
-    expect(reasoningEffortLabel('ultra', '')).toBe('Ultra')
-    expect(reasoningEffortLabel('ultra')).toBe('Ultra')
-    expect(reasoningEffortLabel('high', 'high')).toBe('High')
-    expect(reasoningEffortClamp('high', 'high')).toBeNull()
-    expect(reasoningEffortClamp('none', '')).toBeNull()
+  it('recognizes only real scale levels', () => {
+    expect(isReasoningEffort(DEFAULT_REASONING_EFFORT)).toBe(true)
+    expect(isReasoningEffort('HIGH')).toBe(true)
+    expect(isReasoningEffort('none')).toBe(false)
+    expect(isReasoningEffort('bogus')).toBe(false)
   })
 
   it('treats empty as inherit and only `none` as off', () => {

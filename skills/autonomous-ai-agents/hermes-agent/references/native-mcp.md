@@ -15,14 +15,16 @@ For ad-hoc, one-off MCP tool calls from the terminal without configuring anythin
 
 ## Prerequisites
 
-- **MCP Python dependencies** — included in the standard PM install through the `all` extra. Use PM to add the `mcp` extra.
+- **mcp Python package** -- optional dependency; install with `pip install mcp`. If not installed, MCP support is silently disabled.
 - **Node.js** -- required for `npx`-based MCP servers (most community servers)
 - **uv** -- required for `uvx`-based MCP servers (Python-based servers)
 
 Install the MCP SDK:
 
 ```bash
-python -c "import pm; pm.sync_venv(['mcp'], explicit=True)"
+pip install mcp
+# or, if using uv:
+uv pip install mcp
 ```
 
 ## Quick Start
@@ -194,7 +196,7 @@ If an MCP tool call fails, any credential-like patterns in the error message are
 The `mcp` Python package is not installed. Install it:
 
 ```bash
-python -c "import pm; pm.sync_venv(['mcp'], explicit=True)"
+pip install mcp
 ```
 
 ### "No MCP servers configured"
@@ -211,10 +213,10 @@ Common causes:
 
 ### "MCP server 'X' requires HTTP transport but mcp.client.streamable_http is not available"
 
-If the MCP dependencies are damaged, rebuild the recorded environment through PM:
+Your `mcp` package version doesn't include HTTP client support. Upgrade:
 
 ```bash
-hermes pm repair
+pip install --upgrade mcp
 ```
 
 ### Tools not appearing
@@ -290,7 +292,7 @@ mcp_servers:
 
   filesystem:
     command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
 
   github:
     command: "npx"

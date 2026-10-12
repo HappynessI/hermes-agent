@@ -6,16 +6,12 @@ description: "A practical guide to setting up and using Hermes voice mode across
 
 # Use Voice Mode with Hermes
 
-Python dependency commands on this page use a
-[PM-prepared source checkout](../reference/package-management.md#developer-workflow).
-After a dependency change, reactivate the checkout and restart Hermes.
-
-This guide is the practical companion to the [Voice Mode feature reference](../user-guide/features/voice-mode.md).
+This guide is the practical companion to the [Voice Mode feature reference](/user-guide/features/voice-mode).
 
 If the feature page explains what voice mode can do, this guide shows how to actually use it well.
 
 :::tip
-[Nous Portal](../integrations/nous-portal.md) bundles both the LLM and TTS through one OAuth — voice mode works end-to-end with no extra credentials.
+[Nous Portal](/integrations/nous-portal) bundles both the LLM and TTS through one OAuth — voice mode works end-to-end with no extra credentials.
 :::
 
 ## What voice mode is good for
@@ -65,36 +61,32 @@ If that is not solid yet, fix text mode first.
 ### CLI microphone + playback
 
 ```bash
-cd ~/.hermes/hermes-agent && python -c "import pm; pm.sync_venv(['voice'], explicit=True)"
+cd ~/.hermes/hermes-agent && uv pip install -e ".[voice]"
 ```
 
 ### Messaging platforms
 
 ```bash
-cd ~/.hermes/hermes-agent && python -c "import pm; pm.sync_venv(['messaging'], explicit=True)"
+cd ~/.hermes/hermes-agent && uv pip install -e ".[messaging]"
 ```
 
 ### Premium ElevenLabs TTS
 
 ```bash
-cd ~/.hermes/hermes-agent && python -c "import pm; pm.sync_venv(['tts-premium'], explicit=True)"
+cd ~/.hermes/hermes-agent && uv pip install -e ".[tts-premium]"
 ```
 
 ### Local NeuTTS (optional)
 
-The declared `neutts` dependency requires Python below 3.14. The Hermes runtime
-requires Python 3.14, so requesting this extra does not install NeuTTS there.
-Choose a compatible provider. A separately managed NeuTTS command provider
-needs its own supported Python environment.
-
-### Combined voice and messaging setup
-
 ```bash
-python -c "import pm; pm.sync_venv(['voice', 'messaging', 'tts-premium', 'edge-tts'], explicit=True)"
+python -m pip install -U neutts[all]
 ```
 
-The `all` extra is not every optional feature. It does not include these voice
-and messaging extras.
+### Everything
+
+```bash
+cd ~/.hermes/hermes-agent && uv pip install -e ".[all]"
+```
 
 ## Step 3: install system dependencies
 
@@ -161,22 +153,19 @@ ELEVENLABS_API_KEY=***
 
 ### If you use `hermes setup`
 
-Setup requests declared Python extras through PM. It cannot override their
-Python-version or platform markers:
+If you choose NeuTTS in the setup wizard, Hermes checks whether `neutts` is already installed. If it is missing, the wizard tells you NeuTTS needs the Python package `neutts` and the system package `espeak-ng`, offers to install them for you, installs `espeak-ng` with your platform package manager, and then runs:
 
-The declared `neutts` dependency requires Python below 3.14. The Hermes runtime
-requires Python 3.14, so requesting this extra does not install NeuTTS there.
-Choose a compatible provider. A separately managed NeuTTS command provider
-needs its own supported Python environment.
+```bash
+python -m pip install -U neutts[all]
+```
 
-Select another provider if a dependency cannot run on your platform.
+If you skip that install or it fails, the wizard falls back to Edge TTS.
 
 ## Step 5: recommended config
 
 ```yaml
 voice:
   record_key: "ctrl+b"
-  submit_mode: "direct"  # TUI: direct | draft
   max_recording_seconds: 120
   auto_tts: false
   beep_enabled: true
@@ -195,18 +184,6 @@ tts:
 ```
 
 This is a good conservative default for most people.
-
-In the TUI, `voice.submit_mode` controls what happens after transcription:
-
-- `direct` (default) submits the transcript immediately.
-- `draft` puts the transcript in the composer so you can edit or cancel it before pressing Enter.
-
-For editable voice drafts, set:
-
-```yaml
-voice:
-  submit_mode: "draft"
-```
 
 If you want local TTS instead, switch the `tts` block to:
 
@@ -476,8 +453,8 @@ That progression keeps the debugging surface small.
 
 ## Where to read next
 
-- [Voice Mode feature reference](../user-guide/features/voice-mode.md)
-- [Messaging Gateway](../user-guide/messaging/index.md)
-- [Discord setup](../user-guide/messaging/discord.md)
-- [Telegram setup](../user-guide/messaging/telegram.md)
-- [Configuration](../user-guide/configuration.md)
+- [Voice Mode feature reference](/user-guide/features/voice-mode)
+- [Messaging Gateway](/user-guide/messaging)
+- [Discord setup](/user-guide/messaging/discord)
+- [Telegram setup](/user-guide/messaging/telegram)
+- [Configuration](/user-guide/configuration)

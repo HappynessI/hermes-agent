@@ -32,6 +32,11 @@ def _redirect_cache(tmp_path, monkeypatch):
 # TestGetAudioCacheDir
 # ---------------------------------------------------------------------------
 
+class TestGetAudioCacheDir:
+    def test_creates_directory(self):
+        cache_dir = get_audio_cache_dir()
+        assert cache_dir.exists()
+        assert cache_dir.is_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +50,9 @@ class TestCacheAudioFromBytes:
         assert os.path.exists(path)
         assert Path(path).read_bytes() == data
 
+    def test_default_extension(self):
+        path = cache_audio_from_bytes(b"data")
+        assert path.endswith(".ogg")
 
 
 # ---------------------------------------------------------------------------

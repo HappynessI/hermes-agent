@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import type { ProfileScope } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { getTerminalBackends, selectTerminalBackend } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { AlertTriangle, Check, Loader2, RefreshCw } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import { confirm } from '@/store/confirm'
 import { notify, notifyError } from '@/store/notifications'
 import type { TerminalBackendInfo, TerminalBackendsResponse } from '@/types/hermes'
 
@@ -16,8 +14,6 @@ interface TerminalBackendPanelProps {
   /** Re-read the parent toolset list after a backend change so any derived
    *  pills stay in sync. */
   onConfiguredChange?: () => void
-  /** Capabilities can edit a profile other than the app-wide active one. */
-  profile?: ProfileScope
 }
 
 function StatusPill({ backend }: { backend: TerminalBackendInfo }) {
@@ -46,12 +42,10 @@ function StatusPill({ backend }: { backend: TerminalBackendInfo }) {
  * `terminal.backend` config enum. Each backend row carries a live health probe
  * (Docker daemon reachable, SSH host configured, Modal/Daytona credentials
  * present) so users see Ready / Needs-setup guidance instead of a bare
- * dropdown. Selecting a needs-setup backend is still allowed (matching the CLI
- * configurator) but goes through a confirm step first: the write persists
- * immediately and every later session inherits a backend with no terminal or
- * file tools, so one ambient click must not do that silently.
+ * dropdown. Selecting a needs-setup backend is allowed — the row shows what's
+ * missing rather than blocking, matching the CLI configurator.
  */
-export function TerminalBackendPanel({ onConfiguredChange, profile }: TerminalBackendPanelProps) {
+export function TerminalBackendPanel({ onConfiguredChange }: TerminalBackendPanelProps) {
   const { t } = useI18n()
   const copy = t.settings.toolsets.terminalBackend
   const [data, setData] = useState<TerminalBackendsResponse | null>(null)
@@ -62,13 +56,13 @@ export function TerminalBackendPanel({ onConfiguredChange, profile }: TerminalBa
     setLoading(true)
 
     try {
-      setData(await getTerminalBackends(profile))
+      setData(await getTerminalBackends())
     } catch (err) {
       notifyError(err, copy.failedLoad)
     } finally {
       setLoading(false)
     }
-  }, [copy.failedLoad, profile])
+  }, [copy.failedLoad])
 
   useEffect(() => {
     void refresh()
@@ -82,21 +76,7 @@ export function TerminalBackendPanel({ onConfiguredChange, profile }: TerminalBa
     setSelecting(backend.name)
 
     try {
-      if (backend.status === 'needs_setup') {
-        const proceed = await confirm({
-          title: copy.needsSetupConfirmTitle(backend.label),
-          description: backend.detail
-            ? copy.needsSetupConfirmDescription(backend.detail)
-            : copy.needsSetupConfirmDescriptionGeneric,
-          confirmLabel: copy.needsSetupConfirmAction
-        })
-
-        if (!proceed) {
-          return
-        }
-      }
-
-      await selectTerminalBackend(backend.name, profile)
+      await selectTerminalBackend(backend.name)
       // Mirror the backend write locally so the active highlight tracks the
       // new selection without a refetch (probes are unchanged by a select).
       setData(current =>

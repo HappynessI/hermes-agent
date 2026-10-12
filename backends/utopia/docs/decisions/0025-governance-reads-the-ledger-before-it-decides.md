@@ -1,0 +1,123 @@
+# 0025 · Governance reads the ledger before it decides
+
+- **Status**: Implemented · cuts 1–4 (#434, #437) · decisions revised 2026-09-06, 2026-09-07 and 2026-09-14
+- **Written**: 2026-09-06 (conventions in the [README](README.md))
+- **Related**: [0016](0016-close-the-open-seams-before-cutting-new-ones.md) C2 gave a base its first automation switch, `auto_type_resolution`, and this record copies its shape; #428 asked for bulk and automatic handling of same-name pairs and got the batch path (#429, #430) this builds on; [0020](0020-an-auditor-reads-it-without-us.md) made the ledger complete enough to be read back; [0015](0015-recording-a-sentence-is-not-asserting-a-fact.md) keeps a person's own sentences out of any machine's reach.
+
+> Three hundred namesake pairs wait in Review. A person merges the first ten "Apple / Apple Inc." pairs and keeps the first ten "Zhang Wei / Zhang Wei" pairs apart, and the remaining two hundred and eighty wait for the same person to do the same thing two hundred and eighty more times. The record of those twenty decisions is in the ledger, with names, scores, times and who. Nothing reads it.
+
+## What the adjudicator does today
+
+The resolver files a grey-zone pair as `resolution_reviews` in stage `adjudicating`. The adjudicator (`adjudication.rs`) sends twelve pairs per model call with each side's name, type and top facts, caches the verdict under a key of names, types and facts, and at confidence 0.8 merges or keeps; anything else is escalated to stage `human` with a reason code. From then on the machine never looks at the pair again. The prompt has no history: the same "Zhang Wei" a person has kept apart three times is judged from zero the fourth time, and the pair a person merged yesterday is judged from zero today.
+
+The people using a base have meanwhile written every decision they made into `audit_events`: `review.merge` and `review.keep` with both names, `merge.manual`, `merge.revert`, and the `fact.*` and `conflict.*` families for the other queues. Every row carries who and when. That is the precedent.
+
+## Decisions
+
+### 1. The ledger is the precedent, and only people write it
+
+For a pair the governor asks the ledger four questions: what people decided on these two names (either order), what people decided about either name against other names, how this base decides pairs of this type pair (merged, kept, later reverted), and whether a merge involving either name was reverted. Only rows with an actor count. The agent's own rows never count, or it would cite itself and grow more confident with every round. A proposal a person accepted counts, because the acceptance goes through the person's decide path and is recorded as that person's decision (decision 6). The retrieved precedents go into the adjudication prompt as lines in plain English, and the model is asked to say in one sentence which one it relied on.
+
+### 2. A switch per base, on by default; on starts the queue, off stops it
+
+> **Revised 2026-09-12 (0050).** The default is now on. Off rested on one sentence below — that this
+> step "has not been measured on any base yet" — and the revision to decision 4 measured it: on the
+> labeled base the agent decided 97.7% on its own, agreed with people on 96.7%, merged 6 pairs wrongly
+> (4 of them one pair the model flips on) and left 12 for people (#458). The gate still turns
+> everything it cannot clear into a proposal, every decision is listed under Agent and revertible, and
+> the fuse of decision 9 counts from the moment the switch went on — which, for a base created from
+> here on, is the moment the base was created. The paragraphs below are the original.
+
+
+`knowledge_bases.governance`, a boolean, next to `auto_type_resolution`. Turning it on enqueues a `govern` job at once; an extraction that leaves pairs behind enqueues one; a person's decision enqueues one; an hourly sweep enqueues one for every base whose queue holds pairs the agent has not looked at. All four go through `enqueue_unless_queued`, so a base has at most one job waiting. The job re-reads the switch before every cluster and returns when it is off: turning the switch off ends the queue at the next cluster boundary, and nothing already decided is undone.
+
+Off is the default for the opposite reason `auto_type_resolution` defaults to on: that one was measured (39/41) and moves a type one step down its own subtree, this one merges entities and has not been measured on any base yet. A base earns automation by having history to read, and its owner turns it on.
+
+Two decisions folded into this one. The record first had three states, off / suggest / auto. The gate (decision 4) already turns everything that does not clear it into a proposal, so "suggest" is what the switch does for the pairs it cannot decide, and a second knob would explain the same thing twice. The sweep is hourly because the instant triggers cover the live cases; the sweep exists for backlog left after a job's retries ran out, and a model that is down should not be hit every minute.
+
+### 3. First in, first out, and the head brings its cluster
+
+> **Revised 2026-09-07 (#458).** A round now takes up to three clusters instead of one, chosen from the head of the queue outward and only where they share no entity and no name, since a merge in one cluster changes what the other sees. Their batch calls go out together, the uncertain pairs of the round get their second look together, and the results are applied in order, cluster by cluster, because chained merges must stay sequential. On the labeled base this took a run from 25 minutes to 13 with the same score within the model's run-to-run noise (97.7% decided on its own, 96.7% agreed, 6 wrong merges of which 4 are one pair the model flips on, 12 left for people; 16 pairs and 28 calls in the loop). The model's concurrency limit is the ceiling, not the code: the bench account allows three calls at once. The text below describes the one-cluster round it replaces.
+
+The queue is every pending pair without an open proposal, oldest first. The head's cluster is every other queued pair that shares a name or an entity with it, up to twelve in all, and the whole cluster goes into one model call. Oldest first because the oldest has waited longest and because the order is one a person can predict; the cluster because a name should be judged consistently in one sitting, not once per pair across separate calls, and because the cluster is the unit #428 asked about: three "Zhang Wei" pairs a person kept apart and nine more that should follow.
+
+### 4. Merging needs precedent, keeping apart needs confidence, hard rules come first
+
+> **Revised 2026-09-06, after the first big-file run.** Eight interlocking Wikipedia articles (229 chunks) went into two fresh bases. With the switch off, the adjudicator merged 146 pairs on its own and left 50 for people; with the switch on, this rule let the agent merge nothing, because a fresh base has no precedent, and 200 pairs waited. That inverted the request: the agent was asked to decide with history as *reference*, and this rule had made history a *prerequisite*. The gate now reads: history that contradicts the verdict (a person kept this pair apart, merged it, or reverted a merge on either name) blocks; history that agrees (the same pair, the same name every time, or the type pair's habit) lowers the bar from 0.85 to 0.75; otherwise the agent's own confidence decides, for merging and keeping alike. Types that conflict still never merge. And a pair people already decided does not go to the model at all: the same two entities decided before, or a pair of *different* names people decided the same way every time (identical names carry no such claim; three "Zhang Wei"s are three questions) is applied as the people decided it. The text below is the original and stays as written.
+
+The gate is a pure function of the verdict, its confidence, whether the two types conflict, and the precedents. In order: an `unsure` verdict is proposed; confidence below 0.85 is proposed; any reverted merge involving either name is proposed; a verdict that contradicts what a person decided on this same pair is proposed. A `different` verdict that survives those is applied. A `same` verdict is proposed when the types conflict, and otherwise applied only with support: this pair was merged before, this name was merged before and never kept apart, or this type pair has at least five human decisions, merges at least as many as keeps, and no reverts. A base with no human history therefore never merges on its own; it proposes, and the answers become the history.
+
+Keeping apart is cheap: it changes no fact and a manual merge undoes it. Merging moves facts and a revert has to unwind them, so it is the side that needs a person to have gone first. The threshold sits above the adjudicator's 0.8 because the adjudicator judges one pair in isolation and the governor is standing in for a person.
+
+### 5. Every look is a row in `agent_decisions`
+
+One row per pair the agent looked at: the pair, the action (`merge`, `keep`, `unsure`), the confidence, the model's sentence, the precedents it was shown, and a status. `proposed` waits for a person; `applied` was decided and can be reverted; `accepted`, `overridden` and `reverted` are a person's answers; `superseded` means a person decided a sibling (same name or same entity) after the proposal was written, so the proposal is stale and the pair returns to the queue to be looked at again with the new precedent. That last transition is the cascade: a person keeps one "Zhang Wei" pair apart, the agent's open proposals on the other "Zhang Wei" pairs are superseded, the next job finds them at the head of the queue with a same-pair precedent, and the gate lets it keep them apart itself.
+
+A partial unique index allows one open proposal per pair. The table is the Agent queue on the Review page and the source of the acceptance, override and revert counts; nothing has to be reconstructed from the ledger.
+
+### 6. Answers go through the person's path
+
+Accepting or overriding a proposal calls `decide_review` with the person's id, exactly as the Review page does; reverting an applied merge calls `revert_merge`; merging over an applied keep calls `merge_entities` with the person as `merged_by`. Each writes the usual audit row plus the decision id. So an answer is a person's decision in every table that records decisions, and by decision 1 it is precedent for the next look.
+
+### 8. A pair the batch cannot settle is looked at again, with tools, and then decided or asked about
+
+The batch judges twelve pairs from their top facts and the precedent lines, and its verdict is `unsure` or under the threshold often enough that a base's proposals would otherwise be mostly shrugs. Those pairs, and only those, go through a second look: one pair per conversation, with tools. The model may ask for the full facts of a side, the source passages the facts came from (with the document each is in), what people decided about any name (a substring search of the ledger, so "Apple Computer" turns up for "Apple"), and other entities named alike. At most six lookups, then one of two endings: `decide` with a verdict, a confidence and one sentence naming the fact, passage or precedent that settled it, or `defer` with the one question a person could answer at a glance, naming the fact or document that would settle it. The verdict goes through the same gate as the batch's; nothing the loop finds lets it merge without precedent or against a rule. The question is stored on the row and shown as the row's text; the lookups are stored as a trace and shown under the row, so the explanation of a proposal is what the agent looked at.
+
+Pairs the hard rules stop never enter the loop: a type conflict, a reverted merge in the history, a same-pair precedent that contradicts the verdict. More looking would not change a rule. A base has a daily budget of loop calls (three hundred); when it is spent, uncertain pairs are proposed from the batch's verdict as in cut 1, so the loop can never run away on a large backlog. A model that stops calling tools is nudged once and then treated as not having concluded, with the trace kept.
+
+### 9. Two reverts in a week turn the switch off
+
+A person reverting one of the agent's merges is the strongest signal the ledger has: the agent stood in for a person and was wrong in the one way that costs work to undo. Two of them within seven days, counted from the moment the switch was last turned on, turn the switch off. The base gets a `governance.tripped` alert for its editors and a `kb.updated` row with the machine as the actor, so the switch-off is in the ledger like every other decision. The queue stops at its next cluster boundary as it does for any switch-off; proposals already made stay for people to answer. Turning the switch back on records `governance_since` afresh, so the two reverts that tripped it do not trip it again on the first mistake after a restart.
+
+Both revert paths count: the Agent queue's Revert and the Merges page's Revert on a merge the agent made (the latter now marks the agent's row `reverted` too, so the queue and the history agree). A person merging over an applied keep, or overriding a proposal, does not count: those are corrections to a suggestion, not to a change in the graph.
+
+### 10. The agent judges by written identity rules, and a labeled set says whether it did
+
+The first big-file run (decision 4's revision note) showed two things at once: a fresh base needs the agent to decide on its own, and what the model decides on its own is wrong in patterned ways. So on 2026-09-07 every pair the resolver raised on one governed import of eight interlocking articles (615 pairs, 411 distinct name pairs) was labeled by hand from each side's facts and source passages: `same`, `different`, or `unknown` where no reader could tell either (a bare "judge"). The set lives in `scripts/bench/truth/ai-timeline.duplicates.json`, keyed by the two names, and `scripts/bench/govern.mjs` resets a base's agent decisions without touching the ledger, runs the governor, and scores: decided on its own, agreed with the labels, wrong merges, wrong keeps, left for people.
+
+The patterns became rules, written once (`IDENTITY_RULES`) and read by both prompts: a version, edition, tier, division, subsidiary or legal entity added at the end of a name is a different thing; a phrase that contains a name is not the name; a list is not its members; a common noun is not a proper name; a qualifier dropped from the front, a corporate suffix, a surname for a full name, a parenthetical acronym are the same thing; a different type label, a missing fact, a different partner or role is not a contradiction. Two of the rules are also mechanical, so the model cannot talk its way past them: `name_shape` classifies a pair as identical, abbreviation, suffix, version, extension, phrase or unrelated, and a `same` verdict on a version or a phrase is never applied on the first look alone; `type_family` folds the extractor's labels into person, organization, place and event, and only a difference across families counts as a conflict. Identical names whose labels fall in one family are shown to the model with one label, since the label difference was the reason it gave most often for a wrong split; and a `different` verdict on identical, compatible names goes to the tool loop for a second look before it is applied. Revised 2026-09-14 (#700): a `same` verdict on a version or a phrase goes to that second look too, and once the loop has read both sides' facts and text and still says `same`, the gate reads the pair without its shape. The shape raises a doubt, and only the evidence can settle it: "Lease Agreement dated May 16, 2016, as amended" and "Lease Agreement" are a phrase by shape and one lease by their facts. The identity rules gain the matching sentence: a document, agreement or filing stays one thing through its amendments, each amendment is its own document, and an agreement for other premises, another phase or other parties is a different one. On the labeled set, both runs reset and re-decided on the same extraction: agreement 96.3% → 98.1%, wrong merges 2 → 1, wrong keeps 4 → 2, pairs left for people 30 → 34.
+
+The same 589 pairs, reset and re-run after each change:
+
+| run | decided on its own | agreed with the labels | wrong merges | wrong keeps | left for people | wall clock · loop calls |
+|---|---|---|---|---|---|---|
+| before this decision (gate of 2026-09-06) | 67% | 91% | 1 | 35 | 186 | ran alongside the 63 min import; 301 loop calls |
+| rules, shapes and families | 86% | 95.3% | 6 | 18 | 14 | 26 min · 42 |
+| acronyms, surnames, two-word tails | 98.5% | 96.3% | 6 | 12 | 8 | 22 min · 12 |
+| one label for identical names, second look on a split | 98.2% | 97.3% | 4 | 9 | 9 | 22 min · 15 |
+| one label only within one family (the version shipped) | 97.9% | 96.9% | 4 | 11 | 11 | 25 min · 46 |
+| the same, three clusters a round (#458) | 97.7% | 96.7% | 6 | 10 | 12 | 13 min · 28 |
+
+Wall clock is for 589 pairs with the model capped at three concurrent calls (the endpoint rate-limits above that), so about twenty-five pairs a minute; each run makes one batch call per cluster of up to twelve pairs, roughly sixty, plus the loop calls shown. The loop budget of 2000 calls a day was never approached.
+
+The last two runs differ by run-to-run noise of the model; the shipped version keeps the extractor's labels wherever they carry information (a periodical against a service, a game against an untyped record), because the run before it merged two such pairs, and a wrong merge costs more than a wrong keep. What remains disagreeing is mostly judgment: whether "Claude Mythos 5" is "Claude Mythos", whether "the Claude series" is "Claude", whether a nonprofit legal entity is the organization it controls. Two of the four wrong merges follow a precedent a simulated person left by accepting proposals blindly, which is the ledger working as designed on a bad decision. And the share left for people does not go to zero on purpose: the version and phrase rules hold back a few right merges to stop dozens of wrong ones, and a record with no facts cannot be settled by anyone.
+
+### 7. The governor does not touch the verdict cache
+
+The adjudicator's cache is keyed on names, types and facts. The governor's answer also depends on the precedents, which change with every human decision; a cached verdict would be one taken without them. The governor neither reads nor writes the cache, and the two are kept apart by the switch: off, the adjudicator runs the adjudicating stage as before; on, extraction enqueues the governor instead and both stages flow through the one queue.
+
+## What a reader sees
+
+While a `govern` job runs, the cluster it is deciding is locked: those pairs carry `stage = adjudicating`, the Review card shows "The agent is deciding this pair" with its buttons off, "Select this page" skips them, and `decide_review` refuses them with a 409 until the round ends. The lock is three conditions together, the switch on, the job running, the stage set, so a stale `adjudicating` mark from a crashed job or from the old adjudicator never locks anything; the job also clears every mark when it starts and when it ends. The Overview's Agent section says the agent is working and how many pairs it has still to look at, and the Agent item in the rail carries a pulsing dot for as long as it runs.
+
+Duplicates that the agent proposed on carry the reason code `proposed`; pairs it decided are closed with `governed|<confidence>` and appear under Merges and in History with the machine as the actor, as auto-merges always have. `?queue=agent` lists the rows of decision 5 newest first with both names, the reason and the precedents. The cut-3 UI puts the switch in the base settings, the queue in the Review rail and the counts on the Overview.
+
+## Dead ends
+
+- **Suggestion columns on `resolution_reviews`.** Four columns for action, confidence, reason and precedents. They cover only duplicates, keep no record of how a person answered, and cannot express "superseded"; the table is one more table and answers all three.
+- **Three states: off, suggest, auto.** See decision 2. The gate makes suggesting the fallback for anything it will not apply, so the middle state was already there.
+- **Precedent by embedding.** Embed each decided pair and retrieve the nearest. Name and type families already cover what actually recurs, and the nearest neighbour brings back pairs that look alike and were decided for reasons the vector cannot see. Reconsider when cut 2 gives the model a search tool it can steer.
+- **A minute-level sweep.** The other schedulers tick every minute. A dead model would then be called once a minute per base with backlog until someone noticed.
+
+## Open questions
+
+- **Other queues.** Conflicts have three human actions to learn from (`conflict.close_old`, `keep_both`, `reject_new`); unconfirmed and low-confidence facts have `fact.confirm` and `fact.reject`. Nods (`pending_facts`, 0015) stay out: the person who said it nods.
+- **Cross-base precedent.** A workspace's other bases may hold the same names. Kept to one base until someone asks.
+- **A budget for the batch.** The loop has a daily budget (decision 8); the batch does not, and since #458 a round makes up to three batch calls at once. A job runs twenty clusters and re-enqueues itself while backlog remains, which is what the adjudicator always did. Whether a base needs a cap on that too is a question for a large corpus.
+- **Tools the loop does not have yet.** The graph around a side beyond its direct facts, the entity's disambiguator history, a full-text search of the corpus. Add one when a deferred question keeps asking for it.
+
+## Status history
+
+The status line as it stood on 2026-09-27, before status lines were cut to one line:
+
+> decision 10 revised 2026-09-14 (a shape that raises doubt goes to the second look, and what that look finds is applied, #700) · decision 3 revised 2026-09-07 (three clusters a round, #458) · decision 10 added 2026-09-07 (identity rules, name shapes, type families, the labeled set and `govern.mjs`) · decision 4 revised 2026-09-06 (the agent's own confidence decides, history moves the bar or blocks) · cut 1 implemented (#434) · migration 0035 adds `knowledge_bases.governance` and `agent_decisions`; `governance` in the store holds the precedent families, the first-in-first-out queue with its clusters, the gate and the table; the `govern` job in the server reads the switch, calls the model with precedents and applies or proposes; `?queue=agent`, `ReviewCounts.agent` and `POST /kbs/{id}/review/agent/{decision_id}` on the API · cut 3 (UI, #437) implemented: the switch in base settings, the Agent queue with its rows and answers, the proposal chip on a duplicate card whose Merge / Keep answers the proposal, the Agent section on the Overview · cut 2 implemented: migration 0036 adds `question`, `trace` and `calls` to `agent_decisions`; `governor` in the extract crate holds the tools, the opening and the step reader; `investigate` in the server job runs the loop for pairs the batch could not settle (decision 8) · cut 4 implemented: migration 0037 adds `knowledge_bases.governance_since`; `fuse` in the server job turns the switch off after two reverts of the agent's merges since it was turned on, within seven days, raises `governance.tripped` and writes the ledger (decision 9) · [0026](0026-a-decision-records-why.md) gives a decision its stated reason, hands the batch adjudicator the same precedents and quotes the reason into them · [0028](0028-the-adjudicator-looks-before-it-asks.md) opens the loop of cut 2 to the adjudicator with governance off and gives it a `consequences` tool

@@ -1,32 +1,26 @@
 import { Box, Text } from '@hermes/ink'
 
-import { hotkeys } from '../content/hotkeys.js'
-import { useT } from '../i18n/useT.js'
+import { HOTKEYS } from '../content/hotkeys.js'
 import type { Theme } from '../theme.js'
 
-export function HelpHint({ nativeMode = false, t }: { nativeMode?: boolean; t: Theme }) {
-  const T = useT()
+const COMMON_COMMANDS: [string, string][] = [
+  ['/help', 'full list of commands + hotkeys'],
+  ['/clear', 'start a new session'],
+  ['/resume', 'switch live or resume past sessions'],
+  ['/details', 'control transcript detail level'],
+  ['/copy', 'copy selection or last assistant message'],
+  ['/quit', 'exit hermes']
+]
 
-  const commands: [string, string][] = [
-    ['/help', T.help.commands.help],
-    ['/clear', T.help.commands.clear],
-    ['/resume', T.help.commands.resume],
-    ['/details', T.help.commands.details],
-    ['/copy', T.help.commands.copy],
-    ['/quit', T.help.commands.quit]
-  ]
+const HOTKEY_PREVIEW = HOTKEYS.slice(0, 8)
 
-  const hotkeyPreview = hotkeys().slice(0, 8)
-  const labelW = Math.max(...commands.map(([k]) => k.length), ...hotkeyPreview.map(([k]) => k.length))
+export function HelpHint({ t }: { t: Theme }) {
+  const labelW = Math.max(...COMMON_COMMANDS.map(([k]) => k.length), ...HOTKEY_PREVIEW.map(([k]) => k.length))
 
   const pad = (s: string) => s + ' '.repeat(Math.max(0, labelW - s.length + 2))
 
   return (
-    <Box
-      alignItems="flex-start"
-      {...(nativeMode ? {} : { bottom: '100%', left: 0, position: 'absolute' as const, right: 0 })}
-      flexDirection="column"
-    >
+    <Box alignItems="flex-start" bottom="100%" flexDirection="column" left={0} position="absolute" right={0}>
       <Box
         alignSelf="flex-start"
         borderColor={t.color.primary}
@@ -38,18 +32,18 @@ export function HelpHint({ nativeMode = false, t }: { nativeMode?: boolean; t: T
       >
         <Text>
           <Text bold color={t.color.primary}>
-            {T.help.quickHelp}
+            ? quick help
           </Text>
-          <Text color={t.color.muted}>{T.help.quickHelpTail}</Text>
+          <Text color={t.color.muted}>{'  ·  type /help for the full panel  ·  backspace to dismiss'}</Text>
         </Text>
 
         <Box marginTop={1}>
           <Text bold color={t.color.accent}>
-            {T.help.commonCommands}
+            Common commands
           </Text>
         </Box>
 
-        {commands.map(([k, v]) => (
+        {COMMON_COMMANDS.map(([k, v]) => (
           <Text key={k}>
             <Text color={t.color.label}>{pad(k)}</Text>
             <Text color={t.color.muted}>{v}</Text>
@@ -58,11 +52,11 @@ export function HelpHint({ nativeMode = false, t }: { nativeMode?: boolean; t: T
 
         <Box marginTop={1}>
           <Text bold color={t.color.accent}>
-            {T.help.hotkeys}
+            Hotkeys
           </Text>
         </Box>
 
-        {hotkeyPreview.map(([k, v]) => (
+        {HOTKEY_PREVIEW.map(([k, v]) => (
           <Text key={k}>
             <Text color={t.color.label}>{pad(k)}</Text>
             <Text color={t.color.muted}>{v}</Text>

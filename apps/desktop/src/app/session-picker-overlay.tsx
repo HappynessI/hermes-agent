@@ -1,7 +1,6 @@
 import { useStore } from '@nanostores/react'
 
 import { SessionPickerDialog } from '@/components/session-picker'
-import { completeFlow } from '@/store/desktop-metrics'
 import { $gatewayState, $selectedStoredSessionId, $sessionPickerOpen, setSessionPickerOpen } from '@/store/session'
 
 interface SessionPickerOverlayProps {
@@ -26,11 +25,7 @@ export function SessionPickerOverlay({ onResume }: SessionPickerOverlayProps) {
     <SessionPickerDialog
       activeStoredSessionId={activeStoredSessionId}
       onOpenChange={setSessionPickerOpen}
-      onResume={(...args: Parameters<typeof onResume>) => {
-        completeFlow('session_picker')
-
-        return onResume(...args)
-      }}
+      onResume={onResume}
       open={open}
     />
   )

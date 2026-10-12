@@ -7,10 +7,6 @@ export interface ActiveRuntimeState {
   hasValidMarker: boolean
   shouldUseActiveRuntime: boolean
   usabilityReason: 'usable' | 'unusable'
-  /** The canonical-root install stamp (written by the bootstrap), when the
-   *  active runtime was desktop-installed. Populated by the caller
-   *  (main.ts activeRuntimeState); undefined when never set. */
-  canonicalInstallStamp?: { source?: unknown; commit?: unknown; branch?: unknown } | null
 }
 
 export function hasValidBootstrapMarker(

@@ -1,0 +1,451 @@
+use axum::extract::{Path, Query, State};
+use axum::Json;
+use serde::Deserialize;
+use serde_json::json;
+use utopia_core::models::{KnowledgeBase, Role, User};
+use utopia_core::AppError;
+use uuid::Uuid;
+
+use crate::auth::AuthUser;
+use crate::error::ApiResult;
+use crate::state::AppState;
+
+#[derive(Deserialize)]
+pub struct CreateKbReq {
+    pub name: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub visibility: Option<String>,
+    /// 预置本体包的 id，按给定顺序装。空 = 只有十个种子。
+    ///
+    /// **顺序有意义**：第一个包的类会认领同名的种子类（它们没有 IRI），
+    /// 后面的包撞名时查对齐表。schema.org 放第一个，别的包才对得上。
+    #[serde(default)]
+    pub ontology_packs: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateKbReq {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub visibility: Option<String>,
+    /// 自动扩本体开关（缺省开；关掉不影响"留意"，只是变成你点一下的提案）
+    #[serde(default)]
+    pub auto_extend_ontology: Option<bool>,
+    /// 本体语言（`en` | `zh`）：跟语料走，不跟界面走。见 docs/decisions/0004
+    #[serde(default)]
+    pub ontology_lang: Option<String>,
+    /// 物化推理开关（缺省关）。见 docs/decisions/0002 R1
+    #[serde(default)]
+    pub materialize_inferences: Option<bool>,
+    /// 多久重推一次（分钟）。事实持续在变，只靠手点会让派生一直是缺的
+    #[serde(default)]
+    pub inference_interval_minutes: Option<i32>,
+    /// 抽取结束自动排一轮类型消解（缺省开）。见 docs/decisions/0016 C2
+    #[serde(default)]
+    pub auto_type_resolution: Option<bool>,
+    /// 治理开关（缺省关）：开着，agent 按先进先出过等人的重复对，先读台账再裁；
+    /// 打开那一刻就排一轮，关掉后任务在两簇之间看到就停。见 docs/decisions/0025
+    #[serde(default)]
+    pub governance: Option<bool>,
+    /// 人写的数据约定（「测试单不算数」这类 schema 里没有的规则），问数与探索的
+    /// 提示词都读它。探索生成的描述在另一个字段，PATCH 不了。见 #570
+    #[serde(default)]
+    pub data_conventions: Option<String>,
+}
+
+/// 用户可见的 KB 列表（restricted 库仅矩阵成员与系统管理员可见）。
+pub async fn list(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(workspace_id): Path<Uuid>,
+) -> ApiResult<Json<Vec<KnowledgeBase>>> {
+    utopia_store::workspaces::require_role(&state.pool, user.id, workspace_id, Role::Viewer)
+        .await?;
+    let list =
+        utopia_store::kbs::list_visible(&state.pool, workspace_id, user.id, user.is_admin).await?;
+    Ok(Json(list))
+}
+
+/// 建库：部署管理员（工作区 Admin+ 或系统管理员）。创建者自动进入矩阵为 admin。
+pub async fn create(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(workspace_id): Path<Uuid>,
+    Json(req): Json<CreateKbReq>,
+) -> ApiResult<Json<KnowledgeBase>> {
+    let name = req.name.trim();
+    if name.is_empty() || name.chars().count() > 64 {
+        return Err(AppError::invalid("bad_name", "Name must be 1-64 characters").into());
+    }
+    let kind = req.kind.as_deref().unwrap_or("knowledge");
+    if !matches!(kind, "knowledge" | "memory") {
+        return Err(AppError::Validation("kind must be 'knowledge' or 'memory'".into()).into());
+    }
+    // 建库是部署管理动作（入口在 System settings）：系统管理员或工作区 Admin+。
+    // 用户自建库前端默认 restricted，不污染全员切换器；General 由系统初建保持 open
+    let ws_role =
+        utopia_store::workspaces::require_role(&state.pool, user.id, workspace_id, Role::Viewer)
+            .await?;
+    if !user.is_admin && ws_role < Role::Admin {
+        return Err(AppError::Forbidden.into());
+    }
+    let kb = utopia_store::kbs::create(
+        &state.pool,
+        workspace_id,
+        name,
+        kind,
+        req.description.as_deref(),
+    )
+    .await?;
+    if let Some(v) = req.visibility.as_deref() {
+        utopia_store::kbs::update(
+            &state.pool,
+            kb.id,
+            None,
+            None,
+            Some(v),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+    }
+    utopia_store::access::set_kb_member(&state.pool, kb.id, user.id, "admin", Some(user.id))
+        .await?;
+    install_packs(&state, kb.id, user.id, &req.ontology_packs).await?;
+    let kb = utopia_store::kbs::get(&state.pool, kb.id).await?;
+    Ok(Json(kb))
+}
+
+/// 我的知识库全景（账户层）：可见库 + 我的角色 + 加入信息 + 概览统计。
+pub async fn my_kbs(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(workspace_id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    utopia_store::workspaces::require_role(&state.pool, user.id, workspace_id, Role::Viewer)
+        .await?;
+    let kbs =
+        utopia_store::kbs::list_visible(&state.pool, workspace_id, user.id, user.is_admin).await?;
+    let ids: Vec<Uuid> = kbs.iter().map(|k| k.id).collect();
+    let infos = utopia_store::access::my_kb_infos(&state.pool, &ids, user.id).await?;
+    let mut rows = Vec::with_capacity(kbs.len());
+    for kb in &kbs {
+        let info = infos.iter().find(|i| i.kb_id == kb.id);
+        let role = utopia_store::access::kb_role(&state.pool, &user, kb).await?;
+        rows.push(json!({
+            "kb": kb,
+            "my_role": role.map(|r| r.as_str()),
+            "joined_at": info.and_then(|i| i.joined_at),
+            "added_by_name": info.and_then(|i| i.added_by_name.clone()),
+            "doc_count": info.map(|i| i.doc_count).unwrap_or(0),
+            "member_count": info.map(|i| i.member_count).unwrap_or(0),
+        }));
+    }
+    Ok(Json(json!({ "kbs": rows })))
+}
+
+async fn kb_with_role(
+    state: &AppState,
+    user: &User,
+    kb_id: Uuid,
+    min: Role,
+) -> Result<KnowledgeBase, AppError> {
+    utopia_store::access::require_kb(&state.pool, user, kb_id, min).await
+}
+
+/// 详情附带调用者在本库的角色：前端据此门控破坏性操作（重建/删除）的入口，
+/// 不必让用户点到底才吃 403。
+pub async fn get_one(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let kb = kb_with_role(&state, &user, id, Role::Viewer).await?;
+    let role = utopia_store::access::kb_role(&state.pool, &user, &kb).await?;
+    let mut body = serde_json::to_value(&kb).map_err(|e| AppError::Other(e.into()))?;
+    body["my_role"] = json!(role.map(|r| r.as_str()));
+    Ok(Json(body))
+}
+
+/// 库设置（名称/描述/可见性）：库 admin 起步。
+pub async fn update(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateKbReq>,
+) -> ApiResult<Json<KnowledgeBase>> {
+    kb_with_role(&state, &user, id, Role::Admin).await?;
+    let kb = utopia_store::kbs::update(
+        &state.pool,
+        id,
+        req.name.as_deref().map(str::trim),
+        req.description.as_deref(),
+        req.visibility.as_deref(),
+        req.auto_extend_ontology,
+        req.ontology_lang.as_deref(),
+        req.materialize_inferences,
+        req.inference_interval_minutes,
+        req.auto_type_resolution,
+        req.governance,
+        req.data_conventions.as_deref().map(str::trim),
+    )
+    .await?;
+    // 打开开关就自动开始处理：排一轮，同库已排着的不重复
+    if req.governance == Some(true) {
+        utopia_store::jobs::enqueue_unless_queued(&state.pool, "govern", json!({ "kb_id": id }))
+            .await?;
+    }
+    // 审计只记不阻断
+    let _ = utopia_store::audit::record(
+        &state.pool,
+        Some(id),
+        user.id,
+        "kb.updated",
+        "kb",
+        Some(id),
+        // 约定改了要留痕：那段文字进每一次问数的提示词，谁什么时候改过得查得到
+        json!({
+            "name": req.name,
+            "visibility": req.visibility,
+            "governance": req.governance,
+            "data_conventions": req.data_conventions.is_some(),
+        }),
+    )
+    .await;
+    Ok(Json(kb))
+}
+
+pub async fn delete(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let kb = kb_with_role(&state, &user, id, Role::Admin).await?;
+    utopia_store::kbs::delete(&state.pool, id).await?;
+    // kb_id 置 NULL：库已级联删除，事件留在部署层（actor 与库名在 detail）
+    let _ = utopia_store::audit::record(
+        &state.pool,
+        None,
+        user.id,
+        "kb.deleted",
+        "kb",
+        Some(id),
+        json!({ "name": kb.name }),
+    )
+    .await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// 这个库走到哪一步了（#313）：四个页面的空状态共用同一个判断。
+///
+/// Viewer 起步——看得见这个库的人都该知道它是空的还是在跑。回的全是布尔与
+/// 计数，模型那一项只说配没配，所以不需要工作区 admin 那道门。
+pub async fn readiness(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<utopia_core::models::Readiness>> {
+    kb_with_role(&state, &user, id, Role::Viewer).await?;
+    Ok(Json(utopia_store::kbs::readiness(&state.pool, id).await?))
+}
+
+// ---------------------------------------------------------------------------
+// KB 成员矩阵（库自己的 Settings → Members）
+// ---------------------------------------------------------------------------
+
+pub async fn members(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    kb_with_role(&state, &user, id, Role::Admin).await?;
+    let members = utopia_store::access::kb_members(&state.pool, id).await?;
+    Ok(Json(json!({ "members": members })))
+}
+
+#[derive(Deserialize)]
+pub struct SetMemberReq {
+    /// viewer | editor | admin
+    pub role: String,
+}
+
+pub async fn set_member(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<SetMemberReq>,
+) -> ApiResult<Json<serde_json::Value>> {
+    kb_with_role(&state, &user, id, Role::Admin).await?;
+    utopia_store::access::set_kb_member(&state.pool, id, user_id, &req.role, Some(user.id)).await?;
+    let _ = utopia_store::audit::record(
+        &state.pool,
+        Some(id),
+        user.id,
+        "kb.member_set",
+        "user",
+        Some(user_id),
+        json!({ "role": req.role }),
+    )
+    .await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn remove_member(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<serde_json::Value>> {
+    kb_with_role(&state, &user, id, Role::Admin).await?;
+    utopia_store::access::remove_kb_member(&state.pool, id, user_id).await?;
+    let _ = utopia_store::audit::record(
+        &state.pool,
+        Some(id),
+        user.id,
+        "kb.member_removed",
+        "user",
+        Some(user_id),
+        json!({}),
+    )
+    .await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// 库级审计日志（Admin 起步；纯审计展示）。
+#[derive(Deserialize)]
+pub struct AuditQuery {
+    /// 动作前缀。`entity.` 捞出 entity.retyped / entity.renamed 一族
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub actor: Option<Uuid>,
+    /// 含起点、不含终点，与半开区间的惯例一致
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub until: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+/// 日期参数：按天给（`2026-08-30`）或 RFC3339 都收。
+fn parse_day(raw: Option<&str>) -> Result<Option<chrono::DateTime<chrono::Utc>>, AppError> {
+    let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Ok(Some(d.and_hms_opt(0, 0, 0).unwrap().and_utc()));
+    }
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|t| Some(t.with_timezone(&chrono::Utc)))
+        .map_err(|_| AppError::invalid("bad_date", "expected YYYY-MM-DD or RFC3339"))
+}
+
+/// 审计台账。**分页 + 筛选**——从前是固定最近 100 条，而台账是合规材料，
+/// 「只看得到最近一百条」等于查不了历史。
+pub async fn audit_log(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+    Query(q): Query<AuditQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    kb_with_role(&state, &user, id, Role::Admin).await?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let offset = q.offset.unwrap_or(0).max(0);
+    let action = q.action.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let (events, total) = utopia_store::audit::list_for_kb(
+        &state.pool,
+        id,
+        action,
+        q.actor,
+        parse_day(q.since.as_deref())?,
+        parse_day(q.until.as_deref())?,
+        limit,
+        offset,
+    )
+    .await?;
+    // 下拉按这个库实际发生过的动作填，而不是一份硬编码清单——
+    // 后者会列出一堆这个库从来没有过的选项
+    let actions = utopia_store::audit::actions_for_kb(&state.pool, id).await?;
+    Ok(Json(
+        json!({ "events": events, "total": total, "actions": actions }),
+    ))
+}
+/// 建库时装选中的本体包。
+///
+/// 从前这里要先跑一次 `ensure_default_ontology`：包里的类要认领同名的种子类
+/// （`schema:Organization` 接管 `organization`），而认领的前提是那一行已经存在。
+/// **现在没有种子可认领了**——0009 删掉内置实体类、0010 与 `#125` 删掉种子关系、
+/// 0011 把 `mapped_to` 搬去语义层之后，播种函数本身也退场了。包直接落进空库。
+///
+/// **一个包失败不回滚已装的**：本体是加法，装了一半的库仍然可用，
+/// 而回滚要撤已经建好的类——那正是 0008 决定不做导入撤销的理由。
+/// 失败信息里带上是哪个包，让人知道从哪补。
+///
+/// 没有默认包（#580）：注册建的 General 库与对话框里新建的库都空着起步，
+/// 装哪个包是建库的人选的。
+/// 只被 `create_kb` 调（0062 的前提）：新库没有事实就没有违规可对账，
+/// 所以这里不像 `apply_import` 那样做基线 + 判据对账。哪天它被复用到
+/// 既有库上，这条注释就不再成立——先把对账补上再复用
+pub(super) async fn install_packs(
+    state: &AppState,
+    kb_id: Uuid,
+    actor: Uuid,
+    pack_ids: &[String],
+) -> ApiResult<()> {
+    if pack_ids.is_empty() {
+        return Ok(());
+    }
+    let mut packs = Vec::with_capacity(pack_ids.len());
+    for id in pack_ids {
+        let pack = crate::ontology_packs::get(id)
+            .ok_or_else(|| AppError::invalid("unknown_pack", format!("未知的本体包：{id}")))?;
+        packs.push((pack, crate::ontology_packs::bytes(pack)?));
+    }
+    for (pack, bytes) in &packs {
+        crate::owl_import::apply(state, kb_id, actor, pack.filename, bytes)
+            .await
+            .map_err(|e| AppError::Other(anyhow::anyhow!("装本体包 {} 失败：{e}", pack.id)))?;
+    }
+    // 第二遍：跨包的 domain / range。包是挨个装的，先装的看不见后装的类——
+    // W3C Org 的 headOf 要等 FOAF 的 Agent（#222）。只装一个包时没有"别的包"
+    if packs.len() > 1 {
+        for (pack, bytes) in &packs {
+            let (d, r) =
+                crate::owl_import::relink_domains_ranges(state, kb_id, pack.filename, bytes)
+                    .await
+                    .map_err(|e| {
+                        AppError::Other(anyhow::anyhow!("补本体包 {} 的签名失败：{e}", pack.id))
+                    })?;
+            tracing::debug!(%kb_id, pack = pack.id, domains = d, ranges = r, "跨包签名补链");
+        }
+    }
+    Ok(())
+}
+
+/// 可选的本体包清单，给建库界面。不需要登录之外的权限——它是静态数据。
+pub async fn list_packs(AuthUser(_): AuthUser) -> ApiResult<Json<serde_json::Value>> {
+    let packs: Vec<_> = crate::ontology_packs::PACKS
+        .iter()
+        .map(|p| {
+            json!({
+                "id": p.id,
+                "name": p.name,
+                "summary": p.summary,
+                "classes": p.classes,
+                "properties": p.properties,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "packs": packs })))
+}

@@ -1,8 +1,6 @@
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, posix, win32 } from 'node:path'
-
-import { t } from '../i18n/runtime.js'
+import { join } from 'node:path'
 
 export type SupportedTerminal = 'cursor' | 'vscode' | 'windsurf'
 
@@ -28,57 +26,7 @@ export type TerminalSetupResult = {
 
 const DEFAULT_FILE_OPS: FileOps = { copyFile, mkdir, readFile, writeFile }
 const COPY_SEQUENCE = '\u001b[99;13u'
-// Kitty keyboard protocol CSI u sequences for modified Enter keys.
-// Codepoint 13 = Enter; modifier encoding: 1 + (shift?1:0) + (alt?2:0) + (ctrl?4:0) + (super?8:0).
-// These are recognized by Ink's parse-keypress CSI u handler and produce
-// key.return=true with the correct modifier flags, so textInput.tsx's
-// existing k.return && (k.shift || k.ctrl || ...) branch inserts a newline.
-const SHIFT_ENTER_SEQUENCE = '\u001b[13;2u' // modifier 2 = shift
-const CTRL_ENTER_SEQUENCE = '\u001b[13;5u' // modifier 5 = ctrl
-const SUPER_ENTER_SEQUENCE = '\u001b[13;9u' // modifier 9 = super (Cmd on macOS)
-
-// Legacy multiline sequence used before CSI u migration. Old keybindings
-// that still send this will be auto-replaced on next terminal setup.
-const LEGACY_MULTILINE_SEQUENCE = '\\\r\n'
-
-/**
- * Migrate legacy keybindings that used the old \\\r\n escape sequence
- * for modified Enter keys.  Those sequences arrived at Ink as separate
- * key events (backslash + return), causing unintended submissions.
- * The replacement CSI u sequences are parsed correctly by Ink's
- * parse-keypress handler and produce the proper modifier flags.
- */
-function migrateLegacyBindings(keybindings: unknown[]): number {
-  let migrated = 0
-
-  const replacements: Map<string, string> = new Map([
-    ['shift+enter', SHIFT_ENTER_SEQUENCE],
-    ['ctrl+enter', CTRL_ENTER_SEQUENCE],
-    ['cmd+enter', SUPER_ENTER_SEQUENCE]
-  ])
-
-  for (let i = 0; i < keybindings.length; i++) {
-    const entry = keybindings[i]
-
-    if (!isKeybinding(entry)) {
-      continue
-    }
-
-    const replacement = replacements.get(entry.key ?? '')
-
-    if (
-      replacement &&
-      entry.command === 'workbench.action.terminal.sendSequence' &&
-      entry.when === 'terminalFocus' &&
-      entry.args?.text === LEGACY_MULTILINE_SEQUENCE
-    ) {
-      keybindings[i] = { ...entry, args: { text: replacement } }
-      migrated += 1
-    }
-  }
-
-  return migrated
-}
+const MULTILINE_SEQUENCE = '\\\r\n'
 
 const TERMINAL_META: Record<SupportedTerminal, { appName: string; label: string }> = {
   vscode: { appName: 'Code', label: 'VS Code' },
@@ -98,19 +46,19 @@ const BASE_BINDINGS: Keybinding[] = [
     key: 'shift+enter',
     command: 'workbench.action.terminal.sendSequence',
     when: 'terminalFocus',
-    args: { text: SHIFT_ENTER_SEQUENCE }
+    args: { text: MULTILINE_SEQUENCE }
   },
   {
     key: 'ctrl+enter',
     command: 'workbench.action.terminal.sendSequence',
     when: 'terminalFocus',
-    args: { text: CTRL_ENTER_SEQUENCE }
+    args: { text: MULTILINE_SEQUENCE }
   },
   {
     key: 'cmd+enter',
     command: 'workbench.action.terminal.sendSequence',
     when: 'terminalFocus',
-    args: { text: SUPER_ENTER_SEQUENCE }
+    args: { text: MULTILINE_SEQUENCE }
   },
   {
     key: 'cmd+z',
@@ -216,18 +164,15 @@ export function getVSCodeStyleConfigDir(
   env: NodeJS.ProcessEnv = process.env,
   homeDir: string = homedir()
 ): null | string {
-  // Explicit platform inputs must not inherit the host path separators.
-  const targetJoin = platform === 'win32' ? win32.join : posix.join
-
   if (platform === 'darwin') {
-    return targetJoin(homeDir, 'Library', 'Application Support', appName, 'User')
+    return join(homeDir, 'Library', 'Application Support', appName, 'User')
   }
 
   if (platform === 'win32') {
-    return env['APPDATA'] ? targetJoin(env['APPDATA'], appName, 'User') : null
+    return env['APPDATA'] ? join(env['APPDATA'], appName, 'User') : null
   }
 
-  return targetJoin(homeDir, '.config', appName, 'User')
+  return join(homeDir, '.config', appName, 'User')
 }
 
 function isKeybinding(value: unknown): value is Keybinding {
@@ -345,7 +290,7 @@ export async function configureTerminalKeybindings(
   if (isRemoteShellSession(env)) {
     return {
       success: false,
-      message: t('libText.terminalSetup.mustRunLocally', meta.label)
+      message: `${meta.label} terminal setup must be run on the local machine, not inside an SSH session.`
     }
   }
 
@@ -354,7 +299,7 @@ export async function configureTerminalKeybindings(
   if (!configDir) {
     return {
       success: false,
-      message: t('libText.terminalSetup.settingsPathUnknown', meta.label)
+      message: `Could not determine ${meta.label} settings path on this platform.`
     }
   }
 
@@ -374,7 +319,7 @@ export async function configureTerminalKeybindings(
       if (!Array.isArray(parsed)) {
         return {
           success: false,
-          message: t('libText.terminalSetup.keybindingsNotArray', meta.label, keybindingsFile)
+          message: `${meta.label} keybindings.json is not a JSON array: ${keybindingsFile}`
         }
       }
 
@@ -385,12 +330,11 @@ export async function configureTerminalKeybindings(
       if (code !== 'ENOENT') {
         return {
           success: false,
-          message: t('libText.terminalSetup.readFailed', meta.label, String(error))
+          message: `Failed to read ${meta.label} keybindings: ${error}`
         }
       }
     }
 
-    const migrated = migrateLegacyBindings(keybindings)
     const targets = targetBindings(platform)
 
     const conflicts = targets.filter(target =>
@@ -400,7 +344,8 @@ export async function configureTerminalKeybindings(
     if (conflicts.length) {
       return {
         success: false,
-        message: t('libText.terminalSetup.conflicts', keybindingsFile, conflicts.map(c => c.key).join(', '))
+        message:
+          `Existing terminal keybindings would conflict in ${keybindingsFile}: ` + conflicts.map(c => c.key).join(', ')
       }
     }
 
@@ -415,38 +360,28 @@ export async function configureTerminalKeybindings(
       }
     }
 
-    if (!added && !migrated) {
+    if (!added) {
       return {
         success: true,
-        message: t('libText.terminalSetup.alreadyConfigured', meta.label)
+        message: `${meta.label} terminal keybindings already configured.`
       }
     }
 
-    if (hasExistingFile && (added || migrated)) {
+    if (hasExistingFile) {
       await backupFile(keybindingsFile, ops)
     }
 
     await ops.writeFile(keybindingsFile, `${JSON.stringify(keybindings, null, 2)}\n`, 'utf8')
 
-    const parts: string[] = []
-
-    if (added) {
-      parts.push(t(added === 1 ? 'libText.terminalSetup.addedOne' : 'libText.terminalSetup.addedOther', added, meta.label))
-    }
-
-    if (migrated) {
-      parts.push(t(migrated === 1 ? 'libText.terminalSetup.migratedOne' : 'libText.terminalSetup.migratedOther', migrated))
-    }
-
     return {
       success: true,
       requiresRestart: true,
-      message: t('libText.terminalSetup.summaryIn', parts.join(', '), keybindingsFile)
+      message: `Added ${added} ${meta.label} terminal keybinding${added === 1 ? '' : 's'} in ${keybindingsFile}`
     }
   } catch (error) {
     return {
       success: false,
-      message: t('libText.terminalSetup.configureFailed', meta.label, String(error))
+      message: `Failed to configure ${meta.label} terminal shortcuts: ${error}`
     }
   }
 }
@@ -462,7 +397,7 @@ export async function configureDetectedTerminalKeybindings(options?: {
   if (!detected) {
     return {
       success: false,
-      message: t('libText.terminalSetup.noSupportedIde')
+      message: 'No supported IDE terminal detected. Supported: VS Code, Cursor, Windsurf.'
     }
   }
 

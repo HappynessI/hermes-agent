@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { ErrorIcon } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Loader } from '@/components/ui/loader'
-import { getGlobalModelOptions, profileScopeKey } from '@/hermes'
+import { getGlobalModelOptions } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { ExternalLink, Loader2 } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -19,8 +19,6 @@ import {
   recheckExternalSignin,
   setOnboardingCode,
   setOnboardingModel,
-  startManualOnboarding,
-  startProviderOAuth,
   submitOnboardingCode
 } from '@/store/onboarding'
 
@@ -54,37 +52,20 @@ export function FlowPanel({
   }
 
   if (flow.status === 'confirming_model') {
-    return <ConfirmingModelPanel ctx={ctx} flow={flow} leaving={leaving} onBegin={onBegin} />
+    return <ConfirmingModelPanel flow={flow} leaving={leaving} onBegin={onBegin} profile={ctx.profile} />
   }
 
   if (flow.status === 'error') {
-    // Recovery in the order a stuck user needs it: retry the same provider
-    // (when we know which one failed), fall back to a pasted API key, or go
-    // back to the provider list. Raw error text stays behind Details.
-    const failedProvider = flow.provider
-
     return (
       <div className="grid gap-3">
         <div className="flex items-center gap-1.5 text-sm text-destructive">
           <ErrorIcon className="shrink-0" size="0.875rem" />
           <span>{flow.message || t.onboarding.signInFailed}</span>
         </div>
-        {flow.detail ? (
-          <details className="text-xs text-muted-foreground">
-            <summary className="cursor-pointer select-none">{t.onboarding.errorDetails}</summary>
-            <pre className="mt-1 whitespace-pre-wrap wrap-break-word font-mono text-[0.6875rem]">{flow.detail}</pre>
-          </details>
-        ) : null}
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button onClick={cancelOnboardingFlow} variant="text">
+        <div className="flex justify-end">
+          <Button onClick={cancelOnboardingFlow} variant="outline">
             {t.onboarding.pickDifferentProvider}
           </Button>
-          <Button onClick={() => startManualOnboarding(null, ctx.scope ?? ctx.profile)} variant="outline">
-            {t.onboarding.useApiKeyInstead}
-          </Button>
-          {failedProvider ? (
-            <Button onClick={() => void startProviderOAuth(failedProvider, ctx)}>{t.onboarding.tryAgain}</Button>
-          ) : null}
         </div>
       </div>
     )
@@ -101,7 +82,7 @@ export function FlowPanel({
         <Input
           autoFocus
           onChange={e => setOnboardingCode(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && void submitOnboardingCode(ctx)}
+          onKeyDown={e => e.key === 'Enter' && void submitOnboardingCode(ctx)}
           placeholder={t.onboarding.pasteAuthCode}
           value={flow.code}
         />
@@ -165,7 +146,7 @@ function Step({ children, title }: { children: React.ReactNode; title: string })
 // Device-code display: OTP-style — each character in its own readonly cell.
 // The whole row is the copy button (no side button, no checkmark); on copy the
 // cells flash emerald for feedback. Dashes render as quiet separators.
-export function DeviceCode({ code, copied, onCopy }: { code: string; copied: boolean; onCopy: () => void }) {
+function DeviceCode({ code, copied, onCopy }: { code: string; copied: boolean; onCopy: () => void }) {
   const { t } = useI18n()
 
   return (
@@ -237,12 +218,12 @@ function ConfirmingModelPanel({
   flow,
   leaving,
   onBegin,
-  ctx
+  profile
 }: {
   flow: Extract<OnboardingFlow, { status: 'confirming_model' }>
   leaving: boolean
   onBegin: () => void
-  ctx: OnboardingContext
+  profile?: string
 }) {
   const { t } = useI18n()
   const scrambledModel = useScramble(flow.currentModel, leaving)
@@ -257,8 +238,8 @@ function ConfirmingModelPanel({
   // Pull pricing + tier for the just-picked default so the confirm card
   // shows the same $/Mtok + Free/Pro info the picker and CLI do.
   const options = useQuery({
-    queryKey: ['onboarding-model-options', profileScopeKey(ctx.scope ?? ctx.profile), flow.providerSlug],
-    queryFn: () => getGlobalModelOptions({ includeUnconfigured: true, explicitOnly: false }, ctx.scope ?? ctx.profile)
+    queryKey: ['onboarding-model-options', flow.providerSlug],
+    queryFn: () => getGlobalModelOptions({ includeUnconfigured: true, explicitOnly: false })
   })
 
   const providerRow = options.data?.providers?.find(
@@ -338,23 +319,12 @@ function ConfirmingModelPanel({
         currentModel={flow.currentModel}
         currentProvider={flow.providerSlug}
         onOpenChange={setPickerOpen}
-        onSelect={({ model, provider }) => {
-          // The picker lists models from every configured provider, not just
-          // the one the user just signed in with. Persist the assignment
-          // against the provider that actually serves the picked model (and
-          // sync the card label to it) — otherwise a foreign model gets
-          // paired with the sign-in provider and chat errors out.
-          const picked = options.data?.providers?.find(
-            p => String(p.slug).toLowerCase() === String(provider).toLowerCase()
-          )
-
-          void setOnboardingModel(model, provider, picked?.name)
+        onSelect={({ model }) => {
+          void setOnboardingModel(model)
           setPickerOpen(false)
         }}
         open={pickerOpen}
-        ownerConnectionId={ctx.scope ? (ctx.scope.connectionId ?? null) : undefined}
-        profile={ctx.profile}
-        request={ctx.requestGateway}
+        profile={profile}
       />
     </div>
   )

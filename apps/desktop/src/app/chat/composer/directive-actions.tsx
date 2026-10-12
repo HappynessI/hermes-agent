@@ -17,14 +17,11 @@ import { DIRECTIVE_ACTIONS, type DirectiveAction } from '@/components/assistant-
 import { composerFloatingPill } from '@/components/chat/composer-dock'
 import { Codicon } from '@/components/ui/codicon'
 import { useI18n } from '@/i18n'
-import { wantsNativeBrowser } from '@/lib/external-link'
 import { cn } from '@/lib/utils'
 
 /** Moving between the chip and the pill crosses a gap where neither is hovered.
- *  Long enough that a pointer travelling diagonally across that gap reaches the
- *  pill's own hover before the grace window closes; still reads as instant when
- *  leaving the chip for good. */
-const HIDE_DELAY_MS = 500
+ *  Short enough that it still reads as instant on the way out. */
+const HIDE_DELAY_MS = 120
 
 /** The actionable directive chip under `target` that also belongs to `editor`,
  *  if there is one. */
@@ -97,10 +94,8 @@ export function ComposerDirectiveActions({ editorRef }: { editorRef: RefObject<H
       const editor = editorRef.current
       const chip = editor && actionableChipAt(event.target, editor)
 
-      // Only this editor's chip departures start the grace window. The pill
-      // owns its own boundary; internal pill or unrelated document transitions
-      // must neither dismiss a hovered action nor postpone an existing leave.
-      if (!chip || !editor || chip === actionableChipAt(event.relatedTarget, editor)) {
+      // A move within the same chip (its icon → its label) is not a leave.
+      if (chip && editor && chip === actionableChipAt(event.relatedTarget, editor)) {
         return
       }
 
@@ -140,19 +135,8 @@ export function ComposerDirectiveActions({ editorRef }: { editorRef: RefObject<H
     >
       <button
         className={cn(composerFloatingPill, 'shadow-nous')}
-        // The pill is the composer's stand-in for clicking the link, so it
-        // honours the same convention: ⌘/Ctrl-click escapes to the system
-        // browser instead of the in-app pane.
-        onAuxClick={event => {
-          // Middle-click never fires `click`; it's the other half of the
-          // open-elsewhere convention.
-          if (event.button === 1) {
-            anchor.action.run(anchor.value, { native: true })
-            setAnchor(null)
-          }
-        }}
-        onClick={event => {
-          anchor.action.run(anchor.value, { native: wantsNativeBrowser(event.nativeEvent) })
+        onClick={() => {
+          anchor.action.run(anchor.value)
           setAnchor(null)
         }}
         // Never let the press reach the editor: mousedown inside a

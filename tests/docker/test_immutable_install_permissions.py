@@ -9,9 +9,7 @@ def test_container_sets_hosted_write_policy_env(built_image: str) -> None:
     script = (
         'test "$HERMES_HOME" = "/opt/data" && '
         'test "$HERMES_WRITE_SAFE_ROOT" = "/opt/data" && '
-        # Opt-in extras install into PM generations under $HERMES_HOME, never
-        # the sealed /opt/hermes tree, so the image must not refuse them.
-        'test -z "${HERMES_DISABLE_LAZY_INSTALLS:-}" && '
+        'test "$HERMES_DISABLE_LAZY_INSTALLS" = "1" && '
         'test "$PYTHONDONTWRITEBYTECODE" = "1"'
     )
     result = subprocess.run(

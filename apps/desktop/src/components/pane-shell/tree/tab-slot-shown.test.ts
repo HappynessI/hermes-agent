@@ -3,10 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // ⌘1…⌘9 / ⌃Tab must index the same tabs the strip paints. A chrome-hidden
 // pane (Focus layout's `files`) stays in `group.panes` but isn't a chip —
 // indexing the raw array made ⌘2 land on the strip's first session tab.
-//
-// `activateTreeTabSlot` backs the `view.tabSlot.N` actions, which share
-// ⌘1…⌘9 with `profile.switch.N` and pass through to it when no tab strip is
-// eligible (#92569).
 
 describe('activateTreeTabSlot indexes shown panes only', () => {
   beforeEach(() => {
@@ -52,13 +48,13 @@ describe('activateTreeTabSlot indexes shown panes only', () => {
   it('⌘1 is workspace and ⌘2 is the first SESSION tab when files is hidden', async () => {
     const { activeOf, tree } = await setup()
 
-    expect(tree.activateTreeTabSlot(1)).toBe('workspace')
+    expect(tree.activateTreeTabSlot(1)).toBe(true)
     expect(activeOf()).toBe('workspace')
 
-    expect(tree.activateTreeTabSlot(2)).toBe('session-tile:a')
+    expect(tree.activateTreeTabSlot(2)).toBe(true)
     expect(activeOf()).toBe('session-tile:a')
 
-    expect(tree.activateTreeTabSlot(3)).toBe('session-tile:b')
+    expect(tree.activateTreeTabSlot(3)).toBe(true)
     expect(activeOf()).toBe('session-tile:b')
   })
 
@@ -67,19 +63,19 @@ describe('activateTreeTabSlot indexes shown panes only', () => {
 
     // Shown: workspace + A + B → 3. Slot 4 would have been `B` on the raw array
     // (workspace, files, A, B) before this fix — now it correctly refuses.
-    expect(tree.activateTreeTabSlot(4)).toBeNull()
+    expect(tree.activateTreeTabSlot(4)).toBe(false)
   })
 
   it('⌃Tab cycles only visible chips', async () => {
     const { activeOf, tree } = await setup()
 
-    expect(tree.cycleTreeTabInFocusedZone(1)).toBe('session-tile:a')
+    expect(tree.cycleTreeTabInFocusedZone(1)).toBe(true)
     expect(activeOf()).toBe('session-tile:a')
 
-    expect(tree.cycleTreeTabInFocusedZone(1)).toBe('session-tile:b')
+    expect(tree.cycleTreeTabInFocusedZone(1)).toBe(true)
     expect(activeOf()).toBe('session-tile:b')
 
-    expect(tree.cycleTreeTabInFocusedZone(1)).toBe('workspace')
+    expect(tree.cycleTreeTabInFocusedZone(1)).toBe(true)
     expect(activeOf()).toBe('workspace')
   })
 })

@@ -87,6 +87,8 @@ class TestVisibleProvidersInjectsTTSPlugins:
         visible = tools_config._visible_providers(tts_cat, config={})
 
         names = [row.get("name") for row in visible]
+        # Hardcoded rows (sample — check at least one is present)
+        assert "Microsoft Edge TTS" in names
         # Plugin row injected at the end
         assert "Cartesia" in names
 

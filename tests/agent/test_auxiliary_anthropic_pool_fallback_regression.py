@@ -40,7 +40,8 @@ class TestAnthropicPoolExhaustedFallsBackToEnv:
             "pool is present but has no usable entry (parity with openrouter/codex)"
         )
         assert isinstance(client, AnthropicAuxiliaryClient)
-        assert model
+        # Default aux model when none configured.
+        assert model == "claude-haiku-4-5-20251001"
         # Must have used the env/legacy token, not a pooled entry.
         assert mock_build.call_args.args[0] == "«redacted:sk-…»-oauth-token"
 
@@ -52,7 +53,7 @@ class TestAnthropicPoolExhaustedFallsBackToEnv:
         with patch(
             "agent.auxiliary_client._select_pool_entry", return_value=(True, None)
         ), patch(
-            "agent.anthropic_credentials.resolve_anthropic_token", return_value=None
+            "agent.anthropic_adapter.resolve_anthropic_token", return_value=None
         ):
             from agent.auxiliary_client import _try_anthropic
 

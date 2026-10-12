@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Usage: ./searxng.sh <query> [max_results] [engines]
 # Example: ./searxng.sh "python async" 10 "google,bing"
 

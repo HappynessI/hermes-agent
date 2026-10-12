@@ -10,7 +10,6 @@ const buildOverlayState = (): OverlayState => ({
   billing: null,
   clarify: null,
   confirm: null,
-  connection: null,
   ambient: [],
   widget: null,
   journey: false,
@@ -19,7 +18,6 @@ const buildOverlayState = (): OverlayState => ({
   petPicker: false,
   pluginsHub: false,
   secret: null,
-  vaultUnlock: null,
   sessions: false,
   skillsHub: false,
   subscription: null,
@@ -36,7 +34,6 @@ export const $isBlocked = computed(
     billing,
     clarify,
     confirm,
-    connection,
     journey,
     modelPicker,
     pager,
@@ -47,7 +44,6 @@ export const $isBlocked = computed(
     skillsHub,
     subscription,
     sudo,
-    vaultUnlock,
     widget
   }) =>
     Boolean(
@@ -56,7 +52,6 @@ export const $isBlocked = computed(
       billing ||
       clarify ||
       confirm ||
-      connection ||
       journey ||
       modelPicker ||
       pager ||
@@ -67,7 +62,6 @@ export const $isBlocked = computed(
       skillsHub ||
       subscription ||
       sudo ||
-      vaultUnlock ||
       widget
     )
 )
@@ -126,11 +120,11 @@ export const $isBlocked = computed(
 export const hasFloatingPanel = (overlay: OverlayState): boolean =>
   Boolean(
     overlay.modelPicker ||
-    overlay.pager ||
-    overlay.petPicker ||
-    overlay.pluginsHub ||
-    overlay.sessions ||
-    overlay.skillsHub
+      overlay.pager ||
+      overlay.petPicker ||
+      overlay.pluginsHub ||
+      overlay.sessions ||
+      overlay.skillsHub
   )
 
 export const $isStatusRuleOccluded = computed([$overlayState, $uiState], (overlay, ui) =>
@@ -152,9 +146,6 @@ export const resetOverlayState = () => $overlayState.set(buildOverlayState())
  * shouldn't vanish when a turn ends.  Called from turnController.idle() on
  * every turn completion / interrupt; the old "reset everything" behaviour
  * silently closed /agents the moment delegation finished.
- *
- * `connection` is preserved too: the card belongs to a backend operation that outlives the turn's
- * idle edge, and only the operation's own settlement may close it.
  */
 export const resetFlowOverlays = () =>
   $overlayState.set({
@@ -162,7 +153,6 @@ export const resetFlowOverlays = () =>
     agents: $overlayState.get().agents,
     agentsInitialHistoryIndex: $overlayState.get().agentsInitialHistoryIndex,
     ambient: $overlayState.get().ambient,
-    connection: $overlayState.get().connection,
     widget: $overlayState.get().widget,
     journey: $overlayState.get().journey,
     modelPicker: $overlayState.get().modelPicker,

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 
 import { createRendererLoopPauseController } from '@/lib/renderer-loop-pause'
 import { $petState, type PetInfo, type PetState } from '@/store/pet'
@@ -10,47 +10,6 @@ const DEFAULT_LOOP_MS = 1100
 // Mirrors agent.pet.constants.DEFAULT_SCALE — fallback only; the gateway sends
 // the configured scale.
 const DEFAULT_SCALE = 0.33
-
-function readDevicePixelRatio(): number {
-  const ratio = window.devicePixelRatio
-
-  return Number.isFinite(ratio) && ratio > 0 ? ratio : 1
-}
-
-/**
- * Track the effective renderer pixel ratio. Electron page zoom and moving a
- * window between displays can both change it without remounting the pet.
- */
-function useDevicePixelRatio(): number {
-  const [ratio, setRatio] = useState(readDevicePixelRatio)
-
-  useEffect(() => {
-    let resolutionQuery: MediaQueryList | null = null
-
-    const update = () => {
-      resolutionQuery?.removeEventListener('change', update)
-
-      const next = readDevicePixelRatio()
-
-      setRatio(current => (current === next ? current : next))
-
-      resolutionQuery = typeof window.matchMedia === 'function' ? window.matchMedia(`(resolution: ${next}dppx)`) : null
-      resolutionQuery?.addEventListener('change', update)
-    }
-
-    window.addEventListener('resize', update)
-    window.visualViewport?.addEventListener('resize', update)
-    update()
-
-    return () => {
-      resolutionQuery?.removeEventListener('change', update)
-      window.removeEventListener('resize', update)
-      window.visualViewport?.removeEventListener('resize', update)
-    }
-  }, [])
-
-  return ratio
-}
 
 // Mirrors agent.pet.constants.CODEX_STATE_ROWS (Petdex current taxonomy).
 export const DEFAULT_STATE_ROWS = [
@@ -133,7 +92,7 @@ export function roamWalkRow(dir: -1 | 0 | 1, stateRows?: string[]): { row?: stri
 
 interface PetSpriteProps {
   info: PetInfo
-  /** Opt in to pausing on blur; visible pets animate by default. */
+  /** Keep animating in a deliberately non-activating visible window, such as the pop-out pet overlay. */
   pauseWhenUnfocused?: boolean
   /** On-screen scale multiplier applied on top of the pet's native scale. */
   zoom?: number
@@ -158,7 +117,7 @@ interface PetSpriteProps {
  * with `memo`, this component effectively never re-renders after mount until
  * the pet itself changes.
  */
-function PetSpriteImpl({ info, zoom = 1, stateOverride, rowOverride, pauseWhenUnfocused = false }: PetSpriteProps) {
+function PetSpriteImpl({ info, zoom = 1, stateOverride, rowOverride, pauseWhenUnfocused = true }: PetSpriteProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const stateRef = useRef<PetState>($petState.get())
   const overrideRef = useRef<PetState | undefined>(stateOverride)
@@ -186,12 +145,9 @@ function PetSpriteImpl({ info, zoom = 1, stateOverride, rowOverride, pauseWhenUn
   const loopMs = info.loopMs ?? DEFAULT_LOOP_MS
   const scale = (info.scale ?? DEFAULT_SCALE) * zoom
   const rows = info.stateRows ?? DEFAULT_STATE_ROWS
-  const pixelRatio = useDevicePixelRatio()
 
   const drawW = Math.round(frameW * scale)
   const drawH = Math.round(frameH * scale)
-  const backingW = Math.max(1, Math.round(drawW * pixelRatio))
-  const backingH = Math.max(1, Math.round(drawH * pixelRatio))
 
   const image = useMemo(() => {
     if (!info.spritesheetBase64) {
@@ -369,11 +325,8 @@ function PetSpriteImpl({ info, zoom = 1, stateOverride, rowOverride, pauseWhenUn
         const sx = frame * frameW
         const sy = row * frameH
         ctx.clearRect(0, 0, canvas.width, canvas.height)
-        // Smooth (bicubic) upscale: petdex sheets are illustration art, not
-        // pixel art — nearest-neighbour makes zoomed frames look blocky.
-        ctx.imageSmoothingEnabled = true
-        ctx.imageSmoothingQuality = 'high'
-        ctx.drawImage(image, sx, sy, frameW, frameH, 0, 0, backingW, backingH)
+        ctx.imageSmoothingEnabled = false
+        ctx.drawImage(image, sx, sy, frameW, frameH, 0, 0, drawW, drawH)
         drawnFrame = frame
         drawnRow = row
       }
@@ -400,15 +353,15 @@ function PetSpriteImpl({ info, zoom = 1, stateOverride, rowOverride, pauseWhenUn
       pauseController?.dispose()
       unsubState()
     }
-  }, [image, frameW, frameH, frames, framesByState, framesByRow, loopMs, backingW, backingH, rows, pauseWhenUnfocused])
+  }, [image, frameW, frameH, frames, framesByState, framesByRow, loopMs, drawW, drawH, rows, pauseWhenUnfocused])
 
   return (
     <canvas
       aria-label={info.displayName ? `${info.displayName} pet` : 'pet'}
-      height={backingH}
+      height={drawH}
       ref={canvasRef}
       style={{ height: drawH, width: drawW }}
-      width={backingW}
+      width={drawW}
     />
   )
 }

@@ -2,10 +2,7 @@
  * Layout picker — the preset card grid inside the edit palette. Thumbnails
  * are a miniature render of each preset's layout tree; clicking a card
  * applies it, and "Save current arrangement" captures the live tree as a
- * user preset. The "New grid layout" button opens the zone editor. Above the
- * templates sits the interface mode — Simple / Advanced — because mode and
- * arrangement are the two axes of "what does this window look like", and
- * this palette is where the user comes to answer that.
+ * user preset. The "New grid layout" button opens the zone editor.
  */
 
 import { useStore } from '@nanostores/react'
@@ -17,48 +14,23 @@ import { Input } from '@/components/ui/input'
 import { useContributions } from '@/contrib/react/use-contributions'
 import type { Contribution } from '@/contrib/types'
 import { useI18n } from '@/i18n'
-import { selectableCardClass } from '@/lib/selectable-card'
 import { cn } from '@/lib/utils'
-import {
-  $interfaceMode,
-  INTERFACE_MODES,
-  type InterfaceMode,
-  setInterfaceMode,
-  shownInMode
-} from '@/store/interface-mode'
 
 import type { LayoutNode } from '../model'
 import { isLayoutNode } from '../model'
-import {
-  applyLayoutPreset,
-  deleteUserPreset,
-  isUserPreset,
-  layoutPresetResting,
-  layoutPresetTier,
-  LAYOUTS_AREA,
-  saveCurrentLayoutAs
-} from '../presets'
+import { applyLayoutPreset, deleteUserPreset, isUserPreset, LAYOUTS_AREA, saveCurrentLayoutAs } from '../presets'
 import { $activePresetId } from '../store'
 import { $zoneEditorOpen } from '../zone-editor'
 
-/** Miniature render of a layout tree — the preset card thumbnail. A zone whose
- *  every pane the preset leaves resting is drawn as a ghost: the slot is there,
- *  nothing is in it yet. */
-function TreeThumbnail({ node, resting }: { node: LayoutNode; resting: ReadonlySet<string> }) {
+/** Miniature render of a layout tree — the preset card thumbnail. */
+function TreeThumbnail({ node }: { node: LayoutNode }) {
   if (node.type === 'group') {
-    const ghost = node.panes.every(id => resting.has(id))
-
     return (
       // currentColor-derived fill: light zones on dark themes, dark zones on
-      // light — legible everywhere without leaning on the accent. A ghost is
-      // an outlined empty slot, not a fainter block.
+      // light — legible everywhere without leaning on the accent.
       <div
         className="min-h-0 min-w-0 flex-1 rounded-[2px]"
-        style={
-          ghost
-            ? { border: '1px dashed color-mix(in srgb, currentColor 30%, transparent)' }
-            : { background: 'color-mix(in srgb, currentColor 16%, transparent)' }
-        }
+        style={{ background: 'color-mix(in srgb, currentColor 16%, transparent)' }}
       />
     )
   }
@@ -71,7 +43,7 @@ function TreeThumbnail({ node, resting }: { node: LayoutNode; resting: ReadonlyS
           key={child.id}
           style={{ flex: `${node.weights[i]} ${node.weights[i]} 0px` }}
         >
-          <TreeThumbnail node={child} resting={resting} />
+          <TreeThumbnail node={child} />
         </div>
       ))}
     </div>
@@ -101,12 +73,17 @@ function PresetCard({ preset }: { preset: Contribution }) {
   return (
     <div className="group/preset relative">
       <button
-        className={cn(selectableCardClass({ active, prominent: true }), 'flex w-full flex-col gap-1.5 p-1.5 text-left')}
+        className={cn(
+          'flex w-full flex-col gap-1.5 rounded-lg border p-1.5 text-left transition-colors',
+          active
+            ? 'border-(--ui-accent) bg-(--ui-row-active-background)'
+            : 'border-(--ui-stroke-secondary) hover:border-(--ui-stroke-primary) hover:bg-(--ui-row-hover-background)'
+        )}
         onClick={() => applyLayoutPreset(preset.id, tree)}
         type="button"
       >
         <div className="flex h-12 w-full">
-          <TreeThumbnail node={tree} resting={layoutPresetResting(preset.id)} />
+          <TreeThumbnail node={tree} />
         </div>
         <span
           className={cn('truncate text-[0.68rem] font-medium', active ? 'text-foreground' : 'text-muted-foreground/80')}
@@ -131,48 +108,14 @@ function PresetCard({ preset }: { preset: Contribution }) {
   )
 }
 
-// No thumbnail on purpose: the grey-block miniature is the templates' language
-// for ARRANGEMENT, and a mode is not an arrangement — it is what rests on top
-// of whichever one is picked. Words carry it; the card chrome ties the rows.
-function ModeCard({ mode }: { mode: InterfaceMode }) {
-  const { t } = useI18n()
-  const current = useStore($interfaceMode)
-  const active = mode === current
-  const copy = t.interfaceMode[mode]
-
-  return (
-    <button
-      aria-pressed={active}
-      className={cn(
-        selectableCardClass({ active, prominent: true }),
-        'flex w-full flex-col gap-0.5 px-2.5 py-2 text-left'
-      )}
-      onClick={() => setInterfaceMode(mode)}
-      type="button"
-    >
-      <span className={cn('text-[0.68rem] font-medium', active ? 'text-foreground' : 'text-muted-foreground/80')}>
-        {copy.label}
-      </span>
-      <span className="text-[0.62rem] leading-snug text-(--ui-text-tertiary)">{copy.description}</span>
-    </button>
-  )
-}
-
 export function LayoutPicker() {
   const { t } = useI18n()
   const presets = useContributions(LAYOUTS_AREA)
-  const mode = useStore($interfaceMode)
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // Simple is always the Basic arrangement — its shelf is the two sidebar
-  // sides (layout-presets.ts) and nothing to arrange or save. The decks and
-  // saved layouts are Advanced.
-  const shown = shownInMode(mode)
-  const arranges = shown({ tier: 'advanced' })
-  const layouts = presets.filter(p => isLayoutNode(p.data) && shown({ tier: layoutPresetTier(p.id) }))
-  const templates = layouts.filter(p => !isUserPreset(p.id))
-  const custom = layouts.filter(p => isUserPreset(p.id))
+  const templates = presets.filter(p => !isUserPreset(p.id) && isLayoutNode(p.data))
+  const custom = presets.filter(p => isUserPreset(p.id) && isLayoutNode(p.data))
 
   const commitSave = () => {
     if (!name.trim()) {
@@ -187,16 +130,6 @@ export function LayoutPicker() {
   return (
     <div className="flex flex-col gap-4">
       <section className="flex flex-col gap-2">
-        <PickerSectionLabel>{t.interfaceMode.title}</PickerSectionLabel>
-        <div className="grid grid-cols-2 gap-2">
-          {INTERFACE_MODES.map(mode => (
-            <ModeCard key={mode} mode={mode} />
-          ))}
-        </div>
-        <p className="text-[0.62rem] text-(--ui-text-quaternary)">{t.interfaceMode.hint}</p>
-      </section>
-
-      <section className="flex flex-col gap-2">
         <PickerSectionLabel>{t.zones.templates}</PickerSectionLabel>
         <div className="grid grid-cols-4 gap-2">
           {templates.map(preset => (
@@ -205,67 +138,65 @@ export function LayoutPicker() {
         </div>
       </section>
 
-      {/* Arranging and saving are Advanced: Simple is always Basic. */}
-      {arranges && (
-        <>
-          <section className="flex flex-col gap-2">
-            <PickerSectionLabel>{t.zones.custom}</PickerSectionLabel>
-            {custom.length > 0 && (
-              <div className="grid grid-cols-4 gap-2">
-                {custom.map(preset => (
-                  <PresetCard key={`${preset.source ?? 'core'}:${preset.id}`} preset={preset} />
-                ))}
-              </div>
-            )}
-            <Button
-              className="w-full border border-dashed border-(--ui-stroke-secondary) text-muted-foreground hover:border-(--ui-stroke-primary) hover:text-foreground"
-              onClick={() => $zoneEditorOpen.set(true)}
-              size="sm"
-              variant="ghost"
-            >
-              <Codicon name="add" size="0.875rem" />
-              {t.zones.newGridLayout}
-            </Button>
-          </section>
+      <section className="flex flex-col gap-2">
+        <PickerSectionLabel>{t.zones.custom}</PickerSectionLabel>
+        {custom.length > 0 && (
+          <div className="grid grid-cols-4 gap-2">
+            {custom.map(preset => (
+              <PresetCard key={`${preset.source ?? 'core'}:${preset.id}`} preset={preset} />
+            ))}
+          </div>
+        )}
+        <Button
+          className="h-8 w-full justify-center gap-1.5 border border-dashed border-(--ui-stroke-secondary) text-muted-foreground hover:border-(--ui-stroke-primary) hover:text-foreground"
+          onClick={() => $zoneEditorOpen.set(true)}
+          size="sm"
+          variant="ghost"
+        >
+          <Codicon name="add" size="0.875rem" />
+          {t.zones.newGridLayout}
+        </Button>
+      </section>
 
-          {/* Save-current lives behind a reveal so the raw input doesn't clash
+      {/* Save-current lives behind a reveal so the raw input doesn't clash
           with the card grid until it's actually needed. */}
-          {saving ? (
-            <form
-              className="flex items-center gap-1.5"
-              onSubmit={e => {
-                e.preventDefault()
-                commitSave()
-              }}
-            >
-              <Input
-                autoFocus
-                className="flex-1"
-                onChange={e => setName(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Escape') {
-                    setSaving(false)
-                    setName('')
-                  }
-                }}
-                placeholder={t.zones.nameLayoutPlaceholder}
-                size="sm"
-                value={name}
-              />
-              <Button disabled={!name.trim()} size="sm" type="submit" variant="outline">
-                {t.common.save}
-              </Button>
-              <Button onClick={() => setSaving(false)} size="sm" variant="ghost">
-                {t.common.cancel}
-              </Button>
-            </form>
-          ) : (
-            <Button className="self-start" onClick={() => setSaving(true)} size="inline" variant="text">
-              <Codicon name="save" size="0.8125rem" />
-              {t.zones.saveCurrentAs}
-            </Button>
-          )}
-        </>
+      {saving ? (
+        <form
+          className="flex items-center gap-1.5"
+          onSubmit={e => {
+            e.preventDefault()
+            commitSave()
+          }}
+        >
+          <Input
+            autoFocus
+            className="h-7 flex-1 text-xs"
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Escape') {
+                setSaving(false)
+                setName('')
+              }
+            }}
+            placeholder={t.zones.nameLayoutPlaceholder}
+            value={name}
+          />
+          <Button disabled={!name.trim()} size="sm" type="submit" variant="outline">
+            {t.common.save}
+          </Button>
+          <Button onClick={() => setSaving(false)} size="sm" variant="ghost">
+            {t.common.cancel}
+          </Button>
+        </form>
+      ) : (
+        <button
+          className="flex items-center gap-1.5 self-start text-xs text-muted-foreground/80 transition-colors hover:text-foreground"
+          onClick={() => setSaving(true)}
+          type="button"
+        >
+          <Codicon name="save" size="0.8125rem" />
+          {t.zones.saveCurrentAs}
+        </button>
       )}
     </div>
   )

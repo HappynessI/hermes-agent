@@ -4,6 +4,8 @@ from gateway.session import (
     SessionContext,
     SessionSource,
     build_session_context_prompt,
+    _hash_id,
+    _hash_sender_id,
     _hash_chat_id,
 )
 from gateway.config import Platform, HomeChannel
@@ -15,6 +17,10 @@ from gateway.config import Platform, HomeChannel
 
 class TestHashHelpers:
 
+    def test_hash_id_12_hex_chars(self):
+        h = _hash_id("user-abc")
+        assert len(h) == 12
+        assert all(c in "0123456789abcdef" for c in h)
 
 
     def test_hash_chat_id_preserves_prefix(self):

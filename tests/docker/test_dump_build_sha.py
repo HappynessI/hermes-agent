@@ -1,36 +1,33 @@
 """Regression test: ``hermes dump`` reports a real git SHA inside the container.
 
-``.dockerignore`` excludes ``.git``, so ``git rev-parse HEAD`` fails inside
-the published image. CI writes ``install-stamp.json`` before ``docker build``
-(scripts/write_install_stamp.py) and it is COPY'd to the canonical
-``/opt/hermes/install-stamp.json``. ``hermes dump`` reads the
-commit from that stamp through ``hermes_cli.version_info``.
+Background: ``.dockerignore`` excludes ``.git``, so ``git rev-parse HEAD``
+fails inside the published image and ``hermes dump`` used to report
+``version: ... [(unknown)]``.  The Dockerfile now writes the build-time
+``$HERMES_GIT_SHA`` build-arg to ``/opt/hermes/.hermes_build_sha`` and
+``hermes_cli/build_info.py`` reads it as a fallback.
 
-A local ``docker build`` (the ``built_image`` fixture in
-``tests/docker/conftest.py``) has no CI stamp — only the Dockerfile's
-distribution-only fallback, whose all-zero commit version_info skips. In
-that case ``hermes dump`` falls back to ``(unknown)``.
+CI (``.github/workflows/docker.yml``) always sets the build-arg
+to ``${{ github.sha }}``.  Local ``docker build`` (the ``built_image``
+fixture in ``tests/docker/conftest.py``) does NOT — so locally the file
+is absent and ``hermes dump`` correctly falls back to ``(unknown)``.
 
-This test asserts both cases:
+This test handles both cases:
 
-* When the stamp exists in the image, ``hermes dump`` must show the first 8
-  characters of its commit, not ``(unknown)``.
-* When the stamp is absent, ``hermes dump`` must show ``(unknown)`` — a guard
-  against the helper inventing a SHA from another source.
+* If ``/opt/hermes/.hermes_build_sha`` exists in the image, assert that
+  ``hermes dump`` surfaces its content as the version SHA (not
+  ``(unknown)``).
+* If the file is absent, assert the legacy behaviour (``(unknown)``)
+  still holds — defensive guard against the helper accidentally
+  reporting bogus data from somewhere else.
 """
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
 import re
 import subprocess
 
 
 _VERSION_LINE = re.compile(r"^version:\s+(?P<rest>.+)$", re.MULTILINE)
-# The stamp-first version line is "X.Y.Z [<sha>] (YYYY-MM-DD)" — the sha
-# bracket may be followed by the build-date suffix.
-_SHA_BRACKET = re.compile(r"\[(?P<sha>[^\]]+)\]")
+_SHA_BRACKET = re.compile(r"\[(?P<sha>[^\]]+)\]\s*$")
 
 
 def _run_dump(image: str) -> str:
@@ -53,47 +50,28 @@ def _run_dump(image: str) -> str:
     return r.stdout
 
 
-def _read_stamp_commit_from_image(image: str) -> str | None:
-    """Return the stamp commit from the image, or None when absent/unusable."""
+def _read_baked_sha_from_image(image: str) -> str | None:
+    """Return the ``/opt/hermes/.hermes_build_sha`` content, or None if absent."""
     r = subprocess.run(
         [
             "docker", "run", "--rm", "--entrypoint", "cat", image,
-            "/opt/hermes/install-stamp.json",
+            "/opt/hermes/.hermes_build_sha",
         ],
         capture_output=True, text=True, timeout=30,
     )
     if r.returncode != 0:
         return None
-    try:
-        commit = json.loads(r.stdout).get("commit") or ""
-    except ValueError:
-        return None
-    # An all-zero commit is the writer's fallback placeholder, and
-    # version_info skips it the same way.
-    if not commit or set(commit) == {"0"}:
-        return None
-    return commit
+    return r.stdout.strip() or None
 
 
-def test_dump_reports_stamp_commit_when_present(built_image: str) -> None:
-    """When the image carries an install stamp, dump must surface its commit.
+def test_dump_reports_baked_sha_when_present(built_image: str) -> None:
+    """When the image was built with ``HERMES_GIT_SHA``, dump must surface it.
 
     Together with the smoke-test action (which exercises ``--help``), this
     closes the regression loop for the missing-sha bug: any future change
-    that breaks the stamp -> dump pipeline will fail CI here.
+    that breaks the baked-file -> dump pipeline will fail CI here.
     """
-    stamped = _read_stamp_commit_from_image(built_image)
-    # docker.yml writes this build input before building and testing the image.
-    # Read the independent input: the canonical runner scrubs CI/GITHUB_SHA.
-    source_stamp = Path(__file__).resolve().parents[2] / "install-stamp.json"
-    if os.environ.get("HERMES_TEST_IMAGE"):
-        assert source_stamp.is_file(), "prebuilt image requires its checkout build stamp"
-    if source_stamp.is_file():
-        expected = json.loads(source_stamp.read_text(encoding="utf-8-sig"))["commit"]
-        assert re.fullmatch(r"[0-9a-f]{40}", expected), "invalid expected build commit"
-        assert stamped == expected, "image lost or changed its build provenance"
-    if stamped is not None:
-        assert re.fullmatch(r"[0-9a-f]{40}", stamped), "malformed image stamp commit"
+    baked = _read_baked_sha_from_image(built_image)
     stdout = _run_dump(built_image)
 
     match = _VERSION_LINE.search(stdout)
@@ -104,20 +82,23 @@ def test_dump_reports_stamp_commit_when_present(built_image: str) -> None:
     )
     reported = sha_match.group("sha")
 
-    if stamped is None:
-        # Local-build path: no stamp in the image. The fallback must stay
-        # '(unknown)' — a guard against the helper inventing a SHA.
+    if baked is None:
+        # Local-build path: no build-arg was passed.  Verify the legacy
+        # fallback ``(unknown)`` is intact — guards against the helper
+        # ever inventing a SHA from thin air.
         assert reported == "(unknown)", (
-            f"expected '(unknown)' when no stamp is baked, got {reported!r}"
+            f"expected '(unknown)' when no SHA baked, got {reported!r}"
         )
         return
 
-    # CI path: the stamp exists. ``hermes dump`` shows the first 8 chars.
+    # CI path: build-arg was set, baked file exists.  ``hermes dump``
+    # truncates to 8 chars via ``git rev-parse --short=8`` semantics.
     assert reported != "(unknown)", (
-        "install stamp present in image but dump still reported "
-        f"'(unknown)' — the stamp fallback is broken. Stamp commit: {stamped!r}"
+        "baked SHA file present in image but dump still reported "
+        f"'(unknown)' — the build-info fallback is broken.  "
+        f"Baked file content: {baked!r}"
     )
-    assert reported == stamped[:8], (
-        f"dump reported {reported!r} but the stamp commit is {stamped!r} "
-        f"(expected first 8 chars: {stamped[:8]!r})"
+    assert reported == baked[:8], (
+        f"dump reported {reported!r} but baked file contained {baked!r} "
+        f"(expected first 8 chars: {baked[:8]!r})"
     )

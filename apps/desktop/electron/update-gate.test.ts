@@ -2,11 +2,12 @@
  * Tests for electron/update-gate.ts — the update mutual-exclusion gate that
  * parks local backend spawns while an in-app update is running.
  *
- * The regression this guards (#73822): applyUpdates stops its own backend
- * before committing the hand-off. A marker-only gate lets the renderer's
- * reconnect spawn a fresh backend on the runtime being replaced.
- * The gate must consult the in-process updateInFlight flag and the successful
- * detached hand-off state as well.
+ * The regression this guards (#73822): applyUpdates kills its own backend
+ * BEFORE the Windows venv-blocker scan but writes the on-disk marker AFTER
+ * it. A marker-only gate therefore let the renderer's reconnect spawn a
+ * fresh backend inside the update's own critical section, which the scan
+ * reported as a blocker — aborting every Desktop update attempt on Windows.
+ * The gate must consult the in-process updateInFlight flag as well.
  */
 
 import assert from 'node:assert/strict'
@@ -15,11 +16,10 @@ import { test } from 'vitest'
 
 import { updateGateReason, waitForUpdateClearance } from './update-gate'
 
-function deps(marker: boolean, inFlight: boolean, handoffActive = false) {
+function deps(marker: boolean, inFlight: boolean) {
   return {
     hasLiveMarker: () => marker,
-    isUpdateInFlight: () => inFlight,
-    isHandoffActive: () => handoffActive
+    isUpdateInFlight: () => inFlight
   }
 }
 
@@ -41,35 +41,6 @@ test('updateInFlight alone closes the gate (#73822 — the pre-marker window)', 
 
 test('marker wins as the reported reason when both are set', () => {
   assert.equal(updateGateReason(deps(true, true)), 'marker')
-})
-
-test('handoff remains closed after the detached wrapper exits', async () => {
-  let handoffActive = true
-  let ticks = 0
-
-  const outcome = await waitForUpdateClearance(
-    {
-      hasLiveMarker: () => false,
-      isUpdateInFlight: () => false,
-      isHandoffActive: () => handoffActive
-    },
-    {
-      onWaitTick: reason => {
-        ticks += 1
-        assert.equal(reason, 'handoff')
-
-        if (ticks === 2) {
-          handoffActive = false
-        }
-      },
-      pollMs: 1,
-      sleep: async () => {},
-      timeoutMs: 10_000
-    }
-  )
-
-  assert.equal(outcome, 'finished')
-  assert.equal(ticks, 2)
 })
 
 // ---------------------------------------------------------------------------
@@ -99,7 +70,7 @@ test('parks on the in-flight flag and finishes when it clears', async () => {
   let ticks = 0
 
   const outcome = await waitForUpdateClearance(
-    { hasLiveMarker: () => false, isUpdateInFlight: () => inFlight, isHandoffActive: () => false },
+    { hasLiveMarker: () => false, isUpdateInFlight: () => inFlight },
     {
       onWaitTick: reason => {
         ticks += 1
@@ -129,7 +100,7 @@ test('parks across the flag→marker handoff without a gap', async () => {
   const reasons: string[] = []
 
   const outcome = await waitForUpdateClearance(
-    { hasLiveMarker: () => marker, isUpdateInFlight: () => inFlight, isHandoffActive: () => false },
+    { hasLiveMarker: () => marker, isUpdateInFlight: () => inFlight },
     {
       onWaitTick: reason => {
         ticks += 1

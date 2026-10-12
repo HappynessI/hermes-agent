@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # DuckDuckGo Search Helper Script
 # Wrapper around ddgs CLI with sensible defaults
 # Usage: ./duckduckgo.sh <query> [max_results]

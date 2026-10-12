@@ -1,0 +1,2486 @@
+// 英文语言包。这一份是**结构的权威**：`Strings = typeof en`，其余语言包按它定型，
+// 漏一条就编译不过（见 docs/decisions/0004）。
+//
+// 加新文案时先加在这里，再补其余语言包——顺序反了会得到一个类型错误，那正是本意。
+export const en = {
+  expressionDraft: {
+    title: "Expression draft exploration",
+    unsaved: "Unsaved draft only. Nothing here is saved to the knowledge base. Unit compatibility is not checked.",
+    undeclared: "Undeclared",
+    attribute: "Attribute",
+    constant: "Number",
+    add: "Add (+)",
+    sub: "Subtract (−)",
+    mul: "Multiply (×)",
+    div: "Divide (÷)",
+    expression: "Expression",
+    left: "Left operand",
+    right: "Right operand",
+    kind: "Node type",
+    depthLimit: "Depth limit reached: choose an attribute or a number.",
+    choose: "Search and choose…",
+    missing: "Attribute no longer available",
+    loading: "Loading attributes and rules…",
+    loadError: "Could not load this knowledge base. Check your access and retry.",
+    retry: "Retry",
+    empty: "This knowledge base has no attributes yet.",
+    conclusion: "Conclusion",
+    condition: "Condition",
+    existing: "Explore an existing expression",
+    unsupported: "This expression has an unsupported shape. It has not been converted. Use the existing rule editor for metadata changes.",
+    preview: "Draft preview — not saved",
+    incomplete: "Complete every operand with an available attribute or a finite number to preview.",
+    reset: "Start a new draft",
+    count: (n: number) => `${n} attributes loaded from this knowledge base`,
+  },
+  app: {
+    name: "Utopia",
+    // 化用《乌托邦》全书最后一句（Burnet 1684 译本）：
+    // "there are many things in the commonwealth of Utopia that I rather wish,
+    //  than hope, to see followed in our governments."
+    // 改 I 为 We、去掉插入语逗号、留白 to see 的宾语。
+    tagline: "We rather wish than hope to see.",
+    taglineSource: "— Thomas More, 1516",
+    siteUrl: "https://utopia.bi",
+    docsUrl: "https://utopia.bi/docs",
+  },
+  /** 服务端校验错误的措辞。key = 服务端给的 code；缺一条就退回英文原句，不会崩。
+      契约守卫（调错接口才碰得到）刻意不在这里——它们的读者是开发者 */
+  err: {
+    bad_email: "That doesn't look like an email address.",
+    password_too_short: "Password must be at least 8 characters.",
+    bad_display_name: "Display name must be 1-64 characters.",
+    wrong_password: "Current password is incorrect.",
+    registration_closed:
+      "Sign-up is closed on this deployment — ask an administrator for an account.",
+    no_chat_model:
+      "No chat model configured yet. Set one under Administration → Models.",
+    // 对话流里没答成的那一轮：`error` 帧带的 code（服务端的英文原句只给日志）
+    answer_empty: "The model returned an empty answer. Ask again.",
+    answer_tool_text: "The model wrote a tool call as text instead of answering. Ask again.",
+    answer_tool_call: "The model kept calling tools after its lookups ran out. Ask again.",
+    answer_too_long: "The answer went past the size limit and was not kept.",
+    answer_failed: "The answer could not be completed. Ask again.",
+    answer_not_saved: "The answer could not be saved. Try again later.",
+    search_failed: "The documents could not be searched.",
+    stream_ended:
+      "The answer stream ended unexpectedly. Reopen the conversation to check its status.",
+    stream_lagged: "This page fell behind the answer stream. Reopen the conversation.",
+    model_out_of_credit:
+      "The model account cannot pay for this request. Top it up, or pick another endpoint under Administration → Models.",
+    model_rate_limited: "The model endpoint is rate limiting. Wait a moment and ask again.",
+    model_unavailable: "The model endpoint is unavailable right now. Try again shortly.",
+    model_unreachable:
+      "The model endpoint gave no usable answer. Check its address under Administration → Models.",
+    context_too_long: "This conversation is too long for the model. Start a new conversation.",
+    model_rejected:
+      "The model endpoint refused the request. Check the model settings under Administration → Models.",
+    // 重答（#936）被拒。生成中又来一个新问题（#961）也是 409；两边用同一个 code
+    answer_running: "An answer is still being written in this conversation. Wait for it to finish.",
+    retry_answered: "That question already has an answer, or the conversation went on after it.",
+    retry_not_question: "Only a question can be answered again.",
+    retry_needs_conversation: "A retry needs the conversation its question is in.",
+    bad_upload: "That upload could not be read.",
+    upload_read_failed: "The file could not be read to the end.",
+    no_files: "No file was attached.",
+    upload_needs_folder: "Files can only be uploaded into a folder source.",
+    empty_file: "That file is empty.",
+    file_too_large: "That file is too large — the limit is 8 MB.",
+    bad_ontology_file: "That is not a readable OWL or RDFS file.",
+    bad_name: "Name must be 1-64 characters.",
+    default_kb_open:
+      "The default knowledge base stays open to everyone — create a separate one for private work.",
+    default_kb_undeletable: "The default knowledge base cannot be deleted.",
+    last_owner_demote: "This is the last owner — promote someone else first.",
+    last_owner_remove: "This is the last owner — hand ownership over first.",
+    key_required: "A key is required.",
+    forms_required: "Pick at least one phrase this relation covers.",
+    bad_key:
+      "Keys are lowercase, letters digits and underscores only, up to 40 characters.",
+    self_parent: "A class cannot be its own parent.",
+    parent_cycle:
+      "That class is already below this one — the hierarchy would loop.",
+    bad_lang: "Pick a supported language.",
+    attr_needs_class: "An attribute has to belong to a class.",
+    builtin_name_attribute: "The name attribute is built in and cannot be edited.",
+    attr_has_no_link:
+      "An attribute has no inverse and no super-property — its value is a literal, not something to point back from.",
+    link_target_is_attr:
+      "Pick a relation, not an attribute — an attribute's value is a literal.",
+    sub_property_self: "A relation cannot be its own super-property.",
+    unknown_relation: "That relation is not in this knowledge base.",
+    entity_name_required: "Name cannot be empty.",
+    entity_name_too_long: "Name is too long — 100 characters at most.",
+    unknown_entity_type: "That class is not in this ontology.",
+    nothing_to_update: "Nothing to change.",
+    self_merge: "An entity cannot be merged into itself.",
+    close_at_required:
+      "Pick the date this fact ended — the new one does not say when it started.",
+    empty_query: "Type something to search for.",
+    no_data_sources: "No databases are mounted on this knowledge base.",
+    // 授权是逐工作区的（0014）：源没授权给本库所属的工作区
+    source_not_granted:
+      "This data source is not granted to this workspace. Ask a deployment admin to grant it in Administration → Data sources.",
+    memory_source_permanent:
+      "The Memory source is part of the knowledge base and stays.",
+    source_name_required: "Give this source a name.",
+    bad_cron: "That cron expression could not be parsed.",
+    bad_cron_fields:
+      "A cron expression has five fields: minute hour day month weekday.",
+    ds_name_required: "Give this data source a name.",
+    only_postgres: "Only PostgreSQL is supported for now.",
+    bad_conn_string: "A connection string starts with postgres://",
+    // 刷新结构失败；引擎的原话走 detail（括号里那句）
+    schema_sync_failed:
+      "The schema could not be read — the engine's own message is in parentheses. Check " +
+      "the catalog, schema and account privileges in the connection string, then try Refresh schema again.",
+    concurrency_range: "Pick a number between 1 and 256.",
+    inference_off:
+      "Materialized inference is off for this knowledge base. Turn it on in Settings.",
+    bad_resolution: "That is not a valid decision.",
+    empty_state_span:
+      "A state that ends where it starts holds at no moment. Give an end after the start, or leave it open.",
+    unknown_marks: "A single date marks the start, the end, or neither.",
+    marks_needs_state:
+      "Only a state property says what a single date marks. Events and timeless properties don't.",
+  },
+  /** 机器给的补充（cron 解析器的原话之类）缀在措辞后面 */
+  errDetail: (msg: string, detail: string) => `${msg} (${detail})`,
+  toast: {
+    saved: "Saved",
+    created: "Created",
+    deleted: "Deleted",
+    added: "Added to the ontology",
+    // 哪一处复制不成都说这一句：页面没有剪贴板 API，浏览器也不让用老办法复制
+    copyFailed: "Could not copy. Select the text and copy it by hand.",
+  },
+  account: {
+    /* 账户区字标：Persona——你在这座城里的身份面具 */
+    brand: "Utopia Persona",
+    /* 网页标题用的短名：`Utopia | Persona` */
+    titleTag: "Persona",
+    profile: "Profile",
+    cancel: "Cancel",
+    colLastUsed: "Last used",
+    colCreated: "Created",
+    pickBases: "Search bases…",
+    administration: "Administration",
+    adminChip: "Admin",
+    backToApp: "← Back to app",
+    profileTitle: "Profile",
+    displayName: "Display name",
+    email: "Email",
+    save: "Save",
+    passwordTitle: "Change password",
+    currentPassword: "Current password",
+    newPassword: "New password (min. 8 characters)",
+    changePassword: "Update password",
+    passwordChanged: "Password updated",
+    sso: {
+      title: "Single sign-on",
+      hint:
+        "Link your identity provider account to sign in with SSO. You'll be sent to the provider " +
+        "to confirm it's you.",
+      linkedAs: (subject: string) => `Linked as ${subject}`,
+      notLinked: "Not linked.",
+      link: "Link identity",
+      unlink: "Unlink",
+      unlinkTitle: "Unlink single sign-on?",
+      unlinkHint:
+        "You won't be able to sign in with SSO until you link again. Sessions already open stay signed in.",
+      linked: "Identity linked. You can now sign in with SSO.",
+      unlinked: "Identity unlinked.",
+    },
+    avatarHint: "Avatars are generated from your name for now.",
+    language: "Language",
+    theme: "Theme",
+    themeNames: { dark: "Dark", light: "Light", system: "Follow system" } as Record<"dark" | "light" | "system", string>,
+    kbsNav: "Knowledge bases",
+    kbsTitle: "Knowledge bases",
+    kbsFilter: "Filter by name…",
+    kbOpen: "Open",
+    kbRestricted: "Restricted",
+    kbNameLabel: "Knowledge base",
+    kbRoleLabel: "My role",
+    kbDocsLabel: "Docs",
+    kbMembersLabel: "Members",
+    kbAccessLabel: "Access",
+    addedBy: (name: string, date: string) => `Added by ${name} · ${date}`,
+    joinedOn: (date: string) => `Joined ${date}`,
+    openToEveryone: "Open to everyone",
+    deploymentAdmin: "Deployment admin",
+    openKb: "Open",
+    kbSettingsBtn: "Settings",
+    /* 个人令牌页（0014 / 0016 A2）：给 agent 的钥匙，以这个人的身份行事 */
+    tokensNav: "Agents & tokens",
+    tokensTitle: "Personal access tokens",
+    tokensHint: "A token lets an agent reach Utopia over MCP as you, with no more access than you have. Read-only by default, limited to the bases you pick, revocable here.",
+    newToken: "New token",
+    tokenName: "Name",
+    tokenNamePlaceholder: "My laptop",
+    tokenScope: "Scope",
+    scopeRead: "Read",
+    scopeWrite: "Write",
+    scopeHint: "A ceiling, not a grant — a token never does more than you can.",
+    tokenKbs: "Knowledge bases",
+    kbsAllHint: "Nothing selected means every base you can open.",
+    tokenExpires: "Expires",
+    expiresDays: (n: number) => `${n} days`,
+    expiresNever: "Never",
+    issueToken: "Create token",
+    issuedTitle: "Copy it now. It will not be shown again.",
+    issuedHint:
+      "Utopia keeps only a hash of it. If you lose it, revoke it here and create another.",
+    copy: "Copy",
+    copied: "Copied",
+    mcpTitle: "MCP client configuration",
+    mcpHint:
+      "For Claude Code, Claude Desktop and other Streamable HTTP clients. Each base has its own endpoint, so pick the one the agent should talk to. Other clients spell the keys differently.",
+    mcpBase: "Base",
+    yourTokens: "Your tokens",
+    noTokens: "No tokens yet.",
+    allBases: "All bases",
+    nBases: (n: number) => `${n} base${n === 1 ? "" : "s"}`,
+    lastUsed: (d: string) => `last used ${d}`,
+    neverUsed: "never used",
+    expiresOn: (d: string) => `expires ${d}`,
+    noExpiry: "no expiry",
+    createdOn: (d: string) => `created ${d}`,
+    revoke: "Revoke",
+    revokeConfirm: "Revoke?",
+    revokedOn: (d: string) => `revoked ${d}`,
+    tokenDone: "Done",
+    roleNames: {
+      owner: "Owner",
+      admin: "Admin",
+      editor: "Editor",
+      viewer: "Viewer",
+    } as Record<string, string>,
+  },
+  docs: {
+    /* 文档区字标：Charter——理想之城的立城宪章，与主字标同字体同字号 */
+    brand: "Utopia Charter",
+    backTitle: "Back to Utopia",
+    searchPlaceholder: "Search the docs…",
+    noResults: "No matches.",
+  },
+  // 告警的措辞在客户端，按 kind 查——服务端只发 kind 与 detail，
+  // 不产出展示文案（docs/decisions/0004）
+  alerts: {
+    title: "Alerts",
+    badgeLabel: "Alerts",
+    empty: "Nothing needs attention",
+    emptyHint:
+      "Ingestion, sync and model failures show up here instead of only in the logs.",
+    markAllRead: "Mark all read",
+    close: "Close",
+    // 说清搜的是什么：标题的措辞在客户端，服务端搜不到它，
+    // 所以别让人以为输入 "sync failed" 会有结果
+    searchPlaceholder: "Search sources, knowledge bases, errors",
+    noMatch: "Nothing matches",
+    andMore: (n: number) => `and ${n} more`,
+    system: "System",
+    // kind → 一句说清出了什么事。第二句说该做什么——这才是告警比日志多出来的东西。
+    // **一条告警就是一次故障**，所以标题里没有数量
+    kinds: {
+      "source.sync_failed": {
+        title: "A source failed to sync",
+        hint: "Nothing new came in from it. Check the source's settings.",
+      },
+      "data_source.schema_sync_failed": {
+        title: "A data source is mounted, but its schema is not",
+        hint: "Ask cannot see which tables exist, so it will guess column names. Check the connection, then use Refresh schema.",
+      },
+      "mapping.exploration_empty": {
+        title: "Mapping exploration proposed nothing",
+        hint: "The model read the mounted schema but found no metric or dimension to propose. Refresh the schema under Data mapping > Data sources, add column comments if you can, then run Explore again.",
+      },
+      "llm.unreachable": {
+        title: "The model endpoint gave no usable answer",
+        hint: "Extraction and embedding are stopped. Check the endpoint URL in Administration → Models.",
+      },
+      "llm.rate_limited": {
+        title: "The model endpoint is rate limiting us",
+        hint: "Documents were retried and still turned away, so some are missing facts. Lower model concurrency in Administration, or raise the quota on the account.",
+      },
+      "llm.out_of_credit": {
+        title: "The model account cannot pay for requests",
+        hint: "Extraction and embedding are stopped and will not resume on their own. Top up the account, or set an endpoint that can serve in Administration → Models.",
+      },
+      "document.needs_reader": {
+        title: "A file needs a model to be read",
+        hint: "Scans and images need a document-reading service, and recordings need a transcription model that labels speakers. Each line says what was missing. The file is kept and nothing was read from it yet; it is read as soon as the reader is saved under Administration → Models.",
+      },
+      "governance.tripped": {
+        title: "The agent stopped deciding on its own",
+        hint: "Two of its merges were reverted within seven days, so the switch went off. Look at what it did under Review → Agent, then turn it back on in the base settings when you want it to resume.",
+      },
+    } as Record<string, { title: string; hint: string } | undefined>,
+    // 没见过的 kind 也要能显示：新告警源上线时前端可能还没更新
+    unknownKind: (kind: string) => kind,
+    /** 修好之后接着跑（#216） */
+    runAgain: "Run those again",
+    requeued: (n: number) =>
+      n === 1 ? "1 job back in the queue" : `${n} jobs back in the queue`,
+  },
+
+  kbScope: {
+    deniedTitle: "You don't have access to this knowledge base",
+    deniedBody:
+      "The link points at a base you can't open. Ask whoever shared it to grant you access, or pick one of your own.",
+    missingTitle: "This knowledge base is gone",
+    missingBody:
+      "It was deleted, or the link was mistyped. Your own bases are listed below.",
+    myKbs: "My knowledge bases",
+  },
+  nav: {
+    workspaceLabel: "Workspace",
+    kbLabel: "Knowledge base",
+    findKb: "Find a knowledge base…",
+    noKbMatch: "No knowledge base matches",
+    ask: "Chat",
+    askHint: "Converse with your knowledge base — it can remember",
+    search: "Search",
+    searchHint: "Hybrid search",
+    graph: "Graph",
+    graphHint: "Entities & timelines",
+    library: "Library",
+    libraryHint: "Documents & ingestion",
+    settings: "Settings",
+    settingsHint: "Models & members",
+    signOut: "Sign out",
+    docs: "Docs",
+    loading: "Loading…",
+    serverUnreachable:
+      "Punishment 500: Utopia has gone quiet — it isn't answering.",
+    notFound: "Punishment 404: You are lost in Utopia.",
+    returnHome: "Return home",
+    reportIssue: "Report an issue",
+    refresh: "Refresh",
+  },
+  /* 空状态的共用文案（#313）。
+     **状态一句话，动作在按钮上，不解释原理。** 从前这里是一整段：
+     「图是空的。先去 管理 → 模型 配置对话模型，然后在文库上传文档——
+     实体和关系会自动抽取。」——一句话里塞了状态、两个动作和一段原理，
+     而盯着空页面的人要的是下一步点哪儿。原理属于文档，不属于空状态 */
+  steps: {
+    noModel: "No chat model yet.",
+    /* 配模型要工作区管理员，别人只能去找人——所以话不同，按钮也不给 */
+    noModelAsk: "No chat model yet. Ask an administrator.",
+    configureModel: "Configure model",
+    noDocs: "No documents yet.",
+    upload: "Upload a document",
+    processing: (n: number) => `Reading ${n} document${n === 1 ? "" : "s"}…`,
+    viewProgress: "View progress",
+    someFailed: (n: number) => `${n} document${n === 1 ? "" : "s"} failed.`,
+    /* 文档齐了、抽取也跑完了，图还是空的：不是「还没开始」，是没抽出东西 */
+    nothingExtracted: "Nothing extracted yet.",
+    openLibrary: "Open Library",
+  },
+  login: {
+    signIn: "Sign in",
+    signUp: "Sign up",
+    displayName: "Display name",
+    email: "Email",
+    password: "Password (min. 8 characters)",
+    submitting: "One moment…",
+    createAccount: "Create account",
+    networkError: "Network error, please try again",
+    orDivider: "or",
+    ssoButton: "Continue with SSO",
+    ssoErrors: {
+      unlinked:
+        "This identity isn't linked to an account. Sign in with your password and link it from your account page.",
+      cancelled: "Single sign-on was cancelled.",
+      denied: "The identity provider's answer couldn't be verified.",
+      session: "The sign-in started in a different browser session. Try again.",
+      expired: "The sign-in took too long. Try again.",
+      busy: "Too many sign-ins are in progress. Try again in a moment.",
+      unavailable: "Single sign-on is unavailable right now.",
+      invalid: "The sign-in request was incomplete. Try again.",
+      taken: "That identity is already linked to another account.",
+      already_linked: "Your account already has a linked identity. Unlink it first.",
+    } as Record<string, string>,
+    ssoErrorOther: "Single sign-on failed. Try again.",
+    // 惯用同意句式：By continuing, you agree to the <Terms> and acknowledge the <Privacy>.
+    agreePrefix: "By continuing, you agree to the ",
+    agreeAnd: " and acknowledge the ",
+    agreeSuffix: ".",
+    githubUrl: "https://github.com/deeplethe/utopia",
+  },
+  legal: {
+    privacyTitle: "Privacy policy",
+    termsTitle: "Terms of use",
+    backToSignIn: "← Back to sign in",
+    privacy: {
+      title: "Privacy policy",
+      note: "Default text bundled with Utopia. The organization operating this deployment may replace it with its own policy.",
+      sections: [
+        {
+          h: "A self-hosted platform",
+          body: [
+            "Utopia runs entirely on infrastructure chosen by the organization that deployed it (the operator). The Utopia project has no access to this deployment: the software sends no telemetry, no analytics and no crash reports to anyone.",
+          ],
+        },
+        {
+          h: "What this instance stores",
+          body: ["Everything below lives on the operator's own servers:"],
+          bullets: [
+            "Account details — your email address, display name and a hash of your password.",
+            "Content — uploaded documents, text extracted from them, search indexes and embeddings, and the knowledge graph (entities, relations and their sources) built from that content.",
+            "Activity — your conversations with the assistant, review decisions and ingestion logs, kept so the features that need them can work.",
+          ],
+        },
+        {
+          h: "Where data can leave this server",
+          body: [
+            "If the operator configures an external model provider for chat or embeddings, excerpts of documents and your messages are sent to that provider to answer questions and index content. Which provider — or whether a fully local model is used — is a deployment setting. Nothing else is sent anywhere.",
+          ],
+        },
+        {
+          h: "Who can see what",
+          body: [
+            "Access follows knowledge-base roles: viewers see the knowledge bases they were granted, editors can change content, admins manage members and settings. Deployment administrators can create accounts and see the user list.",
+          ],
+        },
+        {
+          h: "Retention and deletion",
+          body: [
+            "Deleting a document removes it from the base and retires the facts that had no other source; facts with another source keep it as provenance. The content is kept so the deletion can be undone; a deleted document can be restored, and a re-upload of the same file restores it too. A knowledge-base admin can purge a deleted document, which removes its stored content for good. Deleting a knowledge base permanently removes its documents, graph and sources.",
+          ],
+        },
+        {
+          h: "Questions",
+          body: [
+            "This deployment is run by your organization. For questions about how your data is handled here, contact its administrator.",
+          ],
+        },
+      ],
+    },
+    terms: {
+      title: "Terms of use",
+      note: "Default text bundled with Utopia. The organization operating this deployment may replace it with its own terms.",
+      sections: [
+        {
+          h: "About these terms",
+          body: [
+            "This instance of Utopia is operated by the organization that deployed it, not by the Utopia project. Your use of it is governed by that organization's own policies; these default terms cover the basics until the operator replaces them.",
+          ],
+        },
+        {
+          h: "Your account",
+          body: [
+            "Keep your credentials to yourself. Administrators may create, suspend or remove accounts in line with the operator's policies.",
+          ],
+        },
+        {
+          h: "Acceptable use",
+          body: [],
+          bullets: [
+            "Upload only content you are authorized to store and share within your organization.",
+            "Respect access levels: do not attempt to view or change knowledge bases beyond the roles you were granted.",
+            "Do not use the platform to store or spread unlawful content.",
+          ],
+        },
+        {
+          h: "AI-generated answers",
+          body: [
+            "Answers from the assistant are generated from your organization's documents by a language model, with citations. They can be wrong or incomplete — verify against the cited sources before relying on them.",
+          ],
+        },
+        {
+          h: "The software",
+          body: [
+            "Utopia is open-source software provided “as is”, without warranty of any kind. Responsibility for operating this deployment — including backups, availability and compliance — lies with the operator.",
+          ],
+        },
+      ],
+    },
+  },
+  library: {
+    /** 删除是墓碑（#268）：说清作废了几条事实，并给撤销 */
+    deletedWithFacts: (n: number) =>
+      n === 0
+        ? "Document deleted"
+        : n === 1
+          ? "Document deleted · 1 fact retired with it"
+          : `Document deleted · ${n} facts retired with it`,
+    undo: "Undo",
+    restored: "Document restored",
+    /** 「已删除」视图与真删（#268 下半） */
+    deleted: "Deleted",
+    colDeleted: "Deleted",
+    restore: "Restore",
+    purge: "Purge",
+    purgeTitle: "Purge this document?",
+    purgeHint: (name: string) =>
+      `“${name}” is deleted, and its content is still stored so the deletion can be undone. ` +
+      "Purging removes the stored file, its chunks and its evidence quotes for good. " +
+      "The facts it retired stay retired, and the deletion stays on record. This cannot be undone.",
+    purgeConfirm: "Purge",
+    purged: "Content purged",
+    deletedEmpty: "Nothing deleted. Deleted documents wait here until they are restored or purged.",
+    title: "Library",
+    upload: "Upload files",
+    uploading: "Uploading…",
+    uploadFailed: "Upload failed",
+    dropHint: "Drag files here, or click “Upload files”",
+    formats:
+      "PDF · Word · Excel · PowerPoint · Markdown · HTML · TXT · CSV and more",
+    emptyPull: "No documents yet — they arrive when this source syncs.",
+    filterPlaceholder: "Filter by name",
+    filterNoMatch: "No documents match your filter.",
+    anyStatus: "Any extraction state",
+    statusFailed: "Failed",
+    statusDone: "Extracted",
+    statusQueued: "Queued",
+    statusExtracting: "Extracting",
+    statusNone: "Not extracted",
+    retryFailed: (n: number) => `Retry ${n} failed`,
+    retryQueued: (n: number) => `${n} queued for extraction`,
+    colFile: "File",
+    colStatus: "Status",
+    colGraph: "Graph",
+    colChunks: "Chunks",
+    colSize: "Size",
+    colSource: "Source",
+    delete: "Delete",
+    extract: "Extract",
+    reExtract: "Re-extract",
+    reprocess: "Reprocess",
+    // 抽取进度（当前视图内聚合，SSE 推动刷新）
+    extractProgress: (done: number, total: number) =>
+      `Extracting · ${done} / ${total}`,
+    // 失败详情：chip 可点开，不再只有 tooltip
+    errorTitle: "Failure details",
+    errorParse: "Ingestion pipeline",
+    errorGraph: "Graph extraction",
+    copyError: "Copy",
+    errorCopied: "Error copied",
+    /* 抽取丢弃：事实抽出来了却没能落地。此前完全无声——图里少了东西，没人说得出少了什么 */
+    dropsChip: (n: number) => `${n} dropped`,
+    dropsTitle: "Facts that did not land",
+    dropsNote:
+      "These were extracted from the document but blocked on the way in. " +
+      "Each line says why, and how many.",
+    dropsExample: "e.g.",
+    dropReason: {
+      object_missing: "Relation had no object",
+      malformed_item: "The model's item did not fit the schema",
+      truncated_reply: "The model's reply was cut off",
+      quote_not_in_chunk: "Kept, but the quoted sentence is not in the text verbatim",
+      time_not_in_quote: "A time mention's words are not in the text",
+      unknown_ref: "The item points at nothing in the reply",
+      chunk_unextracted: "A passage the endpoint could not answer for",
+      phrase_is_value: "Kept, but the phrase is the value itself",
+      phrase_is_subject: "Kept, but the phrase is the subject's own name",
+    } as Record<string, string>,
+    // 来源级重抽：不危险，只是费时费钱——轻确认，文案直说成本与保留项
+    reExtractSource: "Re-extract",
+    reExtractTitle: "Re-extract this source?",
+    reExtractHint: (n: number, name: string) =>
+      `All ${n} ready document${n === 1 ? "" : "s"} in “${name}” go through the extraction model again. ` +
+      `Existing merges, review decisions and confirmed facts are preserved.`,
+    reExtractConfirm: "Re-extract",
+    queuedDocs: (n: number) => `${n} document${n === 1 ? "" : "s"} queued`,
+    // 全库重建：毁灭性——打字级确认
+    rebuild: "Rebuild graph",
+    rebuildTitle: "Rebuild the knowledge graph?",
+    rebuildHint: (docs: number, name: string) =>
+      `Type “${name}” to confirm. Every entity, fact, merge and pending review in this knowledge base ` +
+      `is permanently removed, then all ${docs} document${docs === 1 ? "" : "s"} are re-extracted from scratch. ` +
+      `Documents, search indexes and the ontology are untouched; the decision ledger is kept.`,
+    rebuildConfirm: "Rebuild permanently",
+    rebuildDone: (e: number, f: number, q: number) =>
+      `Cleared ${e} entities and ${f} facts · ${q} documents queued`,
+    status: {
+      pending: "Queued",
+      parsing: "Parsing",
+      indexing: "Indexing",
+      embedding: "Embedding",
+      ready: "Ready",
+      failed: "Failed",
+    },
+    graphStatus: {
+      none: "—",
+      queued: "Queued",
+      extracting: "Extracting",
+      done: "Done",
+      failed: "Failed",
+      skipped: "Not extracted",
+    },
+    sources: "Sources",
+    allDocs: "All documents",
+    uploads: "Uploads",
+    sourceType: "Type",
+    sourceKinds: {
+      folder: "Folder",
+      url: "URLs",
+      rss: "RSS feed",
+      api: "API",
+      statements: "Statements",
+      custom: "Custom",
+      github_issues: "GitHub issues",
+      jira_issues: "Jira issues",
+      s3: "S3 / MinIO",
+      azure_blob: "Azure Blob",
+      gcs: "Google Cloud Storage",
+      webdav: "WebDAV",
+      notion: "Notion",
+    },
+    sourceKindHints: {
+      folder: "Holds the files you upload: add, drag in and remove them here.",
+      url: "Fetches the listed web pages; changed pages update the same document.",
+      rss: "Subscribes to a feed; each entry becomes a document dated by its publish time.",
+      jira_issues:
+        "Syncs a Jira project's issues. **Each ticket, together with its field-level change " +
+        "history**, becomes one document — what changed from what to what, and when. " +
+        "One call fetches everything; no per-ticket round trips.",
+      github_issues:
+        "Syncs a repository's issues. **Each ticket, together with its state history**, becomes " +
+        "one document — when it was opened, closed, relabelled, reassigned, all dated. " +
+        "Without a token GitHub allows only 60 requests an hour.",
+      s3:
+        "Reads documents out of an S3 bucket, or anything speaking the same protocol " +
+        "(MinIO, Ceph, R2). **Leave the endpoint empty for AWS**; fill it in for a " +
+        "self-hosted one. Each object becomes a document dated by its last modification.",
+      azure_blob:
+        "Reads documents out of an Azure Blob container. Leave the endpoint empty for " +
+        "Azure itself; fill it in for Azurite or a gateway.",
+      gcs:
+        "Reads documents out of a Google Cloud Storage bucket. The service account JSON " +
+        "goes in whole — there is no file on the server to point at.",
+      webdav:
+        "Reads documents off a WebDAV share — Nextcloud, ownCloud, Synology, or anything " +
+        "else speaking the protocol. Walks folders one level at a time; each file becomes " +
+        "a document dated by its last modification.",
+      notion:
+        "Syncs the pages a Notion integration can see — share a page with the integration " +
+        "and it appears here. Dated by when the page was last edited, which is the page's " +
+        "own clock rather than ours.",
+      api: "External systems push JSON documents here, authenticated with this source's own token.",
+      statements:
+        "Your system pushes statements already in the extraction contract; no model reads them. Send events, not the state of a table.",
+      custom:
+        "Polls a URL you control on a schedule — your service returns JSON items and Utopia keeps them in sync.",
+      memory:
+        "Episodes remembered from Chat. Append-only: contradicted memories close their " +
+        "validity range instead of being deleted — the timeline keeps the whole story.",
+    },
+    ingestGuide: "Read the ingest guide →",
+    ingestGuideTitle: "Ingest interface guide",
+    endpointField: "Endpoint URL",
+    endpointCopied: "Endpoint URL copied",
+    copyEndpoint: "Click to copy the full URL",
+    // api 来源的推送状态（queued/running 不会出现，仅为类型完备）
+    pushStatus: {
+      never: "No pushes yet",
+      queued: "—",
+      running: "—",
+      ok: "Push received",
+      failed: "Push failed",
+    },
+    tokenTitle: "Source token",
+    tokenWarning:
+      "Anyone holding this token can push documents into this source. Rotate it if it leaks — the old token stops working immediately.",
+    tokenUsage: "Send it with every push as:",
+    tokenCopied: "Token copied",
+    viewToken: "Token",
+    rotateToken: "Rotate",
+    noToken: "This source has no token yet — generate one to start pushing.",
+    generateToken: "Generate token",
+    close: "Close",
+    authHeaderField: "Authorization header (optional, never shown again)",
+    syncNow: "Sync now",
+    syncStatus: {
+      never: "Never synced",
+      queued: "Queued",
+      running: "Syncing…",
+      ok: "Synced",
+      failed: "Sync failed",
+    },
+    lastSyncAdded: (n: number) => `+${n} last sync`,
+    sourceName: "Name",
+    urlsField: "Page URLs (one per line)",
+    feedUrl: "Feed URL",
+    rssContentMode: "RSS content mode",
+    rssModeFeed: "Feed content only",
+    rssModeFull: "Full article content (new items)",
+    rssModeFeedShort: "Feed only",
+    rssModeFullShort: "Full articles",
+    rssContentModeHint: "Full articles are fetched only for items that appear after you switch this on.",
+    rssFullModeHint:
+      "The first sync records what the feed holds now and imports nothing. Each item that appears after that is stored from the feed's own text when there is enough of it, otherwise from the linked article; an item with neither is listed as skipped.",
+    rssFeedModeHint:
+      "Stores what the feed itself carries — the entry text or its summary — and never opens the linked article.",
+    // 五个数一起读，所以收一个对象：分开传五个位置参数，调换两个不会有人发现
+    rssHydrationCounts: (c: { pending: number; queued: number; retrying: number; complete: number; terminal: number }) =>
+      `pending ${c.pending} · queued ${c.queued} · retrying ${c.retrying} · complete ${c.complete} · terminal ${c.terminal}`,
+    repoField: "Repository (owner/name)",
+    jiraUrlField: "Jira site URL",
+    jiraProjectField: "Project key",
+    s3BucketField: "Bucket",
+    s3PrefixField: "Prefix (optional — without one the whole bucket is read)",
+    s3EndpointField: "Endpoint (leave empty for AWS S3)",
+    s3RegionField: "Region",
+    s3KeyField: "Access key ID",
+    s3SecretField: "Secret access key",
+    azAccountField: "Storage account name",
+    azKeyField: "Account key",
+    gcsKeyField: "Service account JSON (paste the whole file)",
+    davUrlField: "Server URL",
+    davPathField: "Folder (optional — defaults to the root)",
+    davUserField: "Username",
+    davPassField: "Password",
+    notionTokenField: "Internal integration token",
+    notionQueryField: "Search term (optional — empty takes every shared page)",
+    tokenField: "GitHub token (optional, never shown again)",
+    includePullRequests: "Treat pull requests as tickets too",
+    interval: "Sync schedule",
+    intervalManual: "Manual only",
+    intervalEvery: (m: number) =>
+      m < 60 ? `Every ${m} min` : `Every ${m / 60} h`,
+    schedule: {
+      manual: "Manual",
+      interval: "Interval",
+      daily: "Daily",
+      weekly: "Weekly",
+      advanced: "Advanced",
+      every: "Every",
+      minutes: "minutes",
+      hours: "hours",
+      at: "at",
+      cronPlaceholder: "Enter a cron expression",
+      whatIsCron: "What is cron?",
+      cronDocsUrl: "https://crontab.guru",
+      daysShort: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+      dailyAt: (t: string) => `Daily ${t}`,
+    },
+    createSource: "Create",
+    cancel: "Cancel",
+    deleteSource: "Delete source",
+    deleteSourceHint: "Documents are kept and move to Uploads.",
+    newSourceTitle: "New source",
+    iconLabel: "Icon",
+    pageOf: (from: number, to: number, total: number) =>
+      `${from}–${to} of ${total}`,
+    syncHistory: "History",
+    runNew: (n: number) => `+${n} new`,
+    runUpdated: (n: number) => `~${n} updated`,
+    runNothing: "no changes",
+    noRuns: "No syncs recorded yet.",
+    sourceSettings: "Source settings",
+    editSourceTitle: "Source settings",
+    saveChanges: "Save changes",
+    authHeaderEditField: "Authorization header",
+    authKeepHint: "Leave blank to keep the current value.",
+    editKeepNote:
+      "Changing what this source fetches never deletes existing documents. " +
+      "Items the new configuration no longer returns are marked “Not in source” " +
+      "after the next sync. Switching to a different service entirely? Create a new source instead.",
+    notInSource: "Not in source",
+    cleanupMissing: (n: number) => `Clean up ${n} missing`,
+    cleanupTitle: "Delete missing documents",
+    cleanupHint: (n: number, name: string) =>
+      `${n} document${n === 1 ? "" : "s"} in “${name}” ${n === 1 ? "is" : "are"} no longer ` +
+      "present in the source. Deleting removes them from the base and retires the facts that " +
+      "had no other source. Their content is kept, and a deleted document can be restored.",
+    cleanupConfirm: "Delete them",
+    deleteSourceTitle: "Delete this source",
+    deleteSourceBody: (name: string) =>
+      `Type “${name}” to confirm. Documents are kept and move to Uploads; ` +
+      "scheduled syncing stops.",
+    dangerZone: "Danger zone",
+  },
+  search: {
+    placeholder: "Search the knowledge base… (keyword + semantic)",
+    button: "Search",
+    searching: "Searching…",
+    noResults: "No results found",
+    chunkOf: (filename: string, seq: number) => `${filename} · section ${seq}`,
+  },
+  ask: {
+    streamInterrupted: "The answer stream was interrupted. Reopen the conversation to check its status.",
+    /* 重开会话时，最后一问没有回答、也没有在写的回答（多半是答到一半失败了） */
+    noActiveAnswer: "The last question has no answer. Retry it, or send a new message.",
+    historyLoadFailed: "Could not load this conversation.",
+    retryHistory: "Retry",
+    // 重答最后那个没有回答的问题（#936）
+    retryQuestion: "Retry",
+    loadingHistory: "Loading conversation…",
+    loadEarlierConversations: "Load earlier conversations",
+    conversationsLoadFailed: "Could not load conversations.",
+    retryConversations: "Retry",
+    /* 新对话首屏问候：碑铭衬线，品牌名入句（标题不带句号） */
+    greeting: "Ask Utopia what it remembers",
+    emptyTitle: "Chat",
+    emptyBody:
+      "Converse with your knowledge base — cited answers, temporal questions, and it can remember.\nUpload documents in Library and configure a model in Administration → Models first.",
+    placeholder: "Ask anything…",
+    composerHint: "Enter to send · Shift+Enter for a new line",
+    scopeLabel: "Knowledge base",
+    send: "Send",
+    stop: "Stop",
+    stopping: "Stopping…",
+    stopped: "Stopped",
+    thinking: "Thinking…",
+    /* 轨迹上每一步的话（#942）。服务端只给字段：状态、数、时刻，怎么说在这里定。
+       查询、实体名、来源名、问数的目的、记下的那句话是数据，原样显示；
+       没有这些字段的旧消息仍显示当时存下的英文 */
+    step: {
+      failed: "failed",
+      documentNotFound: "document not found",
+      entityNotFound: "entity not found",
+      sourceNotFound: "no such data source",
+      unknownTool: "unknown tool",
+      /* 参数整个解析不出来：多半是模型的输出撞上上限，在半路断了 */
+      unparsed: "incomplete arguments",
+      missing: (param: string) => `missing ${param}`,
+      invalid: (param: string) => `invalid ${param}`,
+      sources: (n: number) => `${n} source${n === 1 ? "" : "s"}`,
+      sections: (n: number) => `${n} section${n === 1 ? "" : "s"}`,
+      matches: (n: number, total?: number) =>
+        total === undefined
+          ? `${n} match${n === 1 ? "" : "es"}`
+          : `${n} of ${total} matches`,
+      /* `at` 是世界时间（那时成立的），`recorded` 是下面两句之一（那时记下的） */
+      facts: (n: number, at: string | null, recorded: string | null) =>
+        `${n} fact${n === 1 ? "" : "s"}${at ? ` at ${at}` : ""}${recorded ? `, ${recorded}` : ""}`,
+      recordedBy: (t: string) => `as recorded by ${t}`,
+      recordedBefore: (t: string) => `as recorded before ${t}`,
+      linked: (n: number, total: number) =>
+        n === total ? `${n} linked` : `${n} of ${total} linked`,
+      dated: (n: number, total: number) =>
+        n === total
+          ? `${n} dated fact${n === 1 ? "" : "s"}`
+          : `${n} of ${total} dated facts`,
+      /* `more`：列到上限就停了，后面可能还有 */
+      paths: (n: number, more: boolean, hops: number) =>
+        n === 0
+          ? "no path"
+          : `${n}${more ? "+" : ""} path${n === 1 && !more ? "" : "s"}, shortest ${hops} hop${hops === 1 ? "" : "s"}`,
+      changes: (n: number, more: boolean) =>
+        n === 0 ? "no changes" : `${n}${more ? "+" : ""} change${n === 1 && !more ? "" : "s"}`,
+      /* 没给 until 的窗口开到现在：「2026-09-01 → now」 */
+      now: "now",
+      rows: (n: number, more: boolean) =>
+        `${n}${more ? "+" : ""} row${n === 1 && !more ? "" : "s"}`,
+      rules: (n: number) => (n === 0 ? "none" : `${n} rule${n === 1 ? "" : "s"}`),
+      /* rule_matches：这条规则此刻标出了几处 */
+      marked: (n: number) => `${n} marked`,
+      /* 问数那一步可以展开看它跑的 SQL（#936） */
+      sql: "SQL",
+    },
+    newChat: "New chat",
+    recent: "Recent",
+    untitled: "Untitled",
+    noConversations: "No conversations yet.",
+    deleteConversation: "Delete conversation",
+    searchConversations: "Search chats",
+    moreActions: "More",
+    rename: "Rename",
+    copyTitle: "Copy title",
+    deleteTitle: "Delete conversation?",
+    deleteHint: (name: string) =>
+      `“${name}” and its messages will be permanently removed.`,
+    deleteBtn: "Delete",
+    cancel: "Cancel",
+    // 这条回答背后一条来源都没有（#547）。是事实陈述，所以每条都挂，不猜哪条该挂
+    noSources: "No sources cited",
+    // 预览浮窗右上角那条出路：看完这一段还想看整篇的人走这里
+    openOriginal: "Open original",
+    // 复制（#936）：回答整段一个，代码块各一个
+    copyAnswer: "Copy answer",
+    copyCode: "Copy code",
+    copied: "Copied",
+  },
+  graph: {
+    // 还没判出类型的实体（0009）。不是一个类，是"这一格还空着"
+    untyped: "Untyped",
+    legendMore: (n: number) => `All ${n} classes`,
+    nodeBudget: "How many entities to draw",
+    nodeBudgetMore: "Draw more",
+    nodeBudgetLess: "Draw fewer",
+    legendSearch: "Filter classes",
+    legendNone: "No class matches",
+    legendOnly: "Only",
+    legendShowAll: (n: number) => `Show all (${n} hidden)`,
+    legendHideAll: "Hide all",
+    legendAllHint:
+      "Every class on screen, most common first. Click to show or hide.",
+    searchMore: (n: number) => `${n} more — load 20`,
+    zoomIn: "Zoom in",
+    zoomOut: "Zoom out",
+    fitView: "Fit view",
+    layoutForce: "Force layout",
+    layoutCircular: "Circular layout",
+    layoutPack: "Cluster by type",
+    searchEntity: "Search entities…",
+    searchInSubgraph: "Search in subgraph…",
+    backToOverview: "← Full graph",
+    // 顺序不是随便排的：模型没配好之前，上传的文档只会排队等着，
+    // 一个实体也抽不出来。先配模型，再传文档
+    // 管理页在头像菜单里叫 Administration，提示语得叫同一个名字（#267）。
+    // 能配模型的人和不能配的人看到的不是同一句：后者只能去找管理员
+    facts: "facts",
+    noFacts: "No facts for this entity yet",
+    confidence: "confidence",
+    evidence: "evidence",
+    noEvidence: "No evidence recorded",
+    noQuote: "(no quote)",
+    openInDoc: "Open the passage in the document",
+    /* 抽取器从原文读出来的谓词，规范成了标识符。词表外的说法会被降级成
+       related to，原意只在这里活着。
+       **措辞不能宣称这是引文**：关系 key 只能是 [a-z0-9_]，所以中文语料里
+       「采购了」出来是 purchases——说"原文说的是 purchases"是假的。
+       逐字原句就在旁边的证据引文里，没丢。 */
+    proposedPredicate: (p: string) => `read from the text as “${p}”`,
+    saidAs: (words: string) => `the documents say it “${words}”`,
+    inferredPredicate:
+      "not a relation in the ontology, this is the source's wording",
+    unknownPredicate: "no relation stated",
+    sectionRef: (filename: string, seq: number) =>
+      `${filename} · section ${seq} →`,
+    fromVersion: (v: number) => `v${v}`,
+    /** 证据所在的文档已删（#268）：事实还在是因为另有出处 */
+    sourceDeleted: "source deleted",
+    sourceDeletedHint:
+      "The document this quote came from was deleted. The fact stays because it has another source.",
+    staleEvidenceHint:
+      "This evidence comes from an earlier version of the document. " +
+      "The document has since been updated; the fact itself is unaffected.",
+    staleFactChip: "unconfirmed",
+    staleFactHint:
+      "All evidence for this fact comes from earlier versions of its source documents — " +
+      "the current content no longer states it. It may still be true; review it under Review.",
+    /* 实体修正：抽取给的是初判，人可以推翻它 */
+    edit: "Edit",
+    editName: "Name",
+    editType: "Type",
+    editSave: "Save",
+    editCancel: "Cancel",
+    editSaved: "Entity updated",
+    editEmptyName: "Name cannot be empty",
+    /* 同名不是错误——两个张伟可以并存。只提示，不阻断 */
+    viewRelations: "Relations",
+    viewTimeline: "Timeline",
+    /* 第三视图：记录时间轴——不是"事情何时发生"，而是"我们何时这么认为" */
+    viewHistory: "History",
+    viewDerived: "Derived",
+    derivedEdges: (n: number) => `${n} derived`,
+    derivedHint:
+      "Nothing here was asserted — the engine worked it out, from an axiom your ontology declares or from a rule someone wrote. Each one shows the premises it came from.",
+    derivedNoProof: "The premises are gone.",
+    /* 争议（0017 §3） */
+    contestedChip: "disputed",
+    contestedHint: (kind: string, derived: string | null) =>
+      kind === "derived_contradiction"
+        ? `A derivation contradicts this assertion${derived ? `: ${derived}` : ""}. Open it under Review.`
+        : kind === "temporal_conflict"
+          ? "A newer assertion conflicts with this one in time. Open it under Review."
+          : "This assertion breaks an axiom the ontology declares. Open it under Review.",
+    blockedTitle: "Did not land",
+    blockedHint:
+      "The engine could draw these edges; an assertion stood in the way. They show on the graph as ghost edges.",
+    blockedBy: (t: string) => `blocked by ${t}`,
+    blockedReview: "Review",
+    /** 证明链（0002 R2）：每一步是一条断言前提，展开到原句 */
+    proofStep: (n: number) => `Step ${n}`,
+    proofRetracted: "since retracted",
+    proofLoading: "Tracing the proof…",
+    derivedPanel: "Inference",
+    derivedRunAsk: "Re-run inference for the whole base?",
+    derivedRunGo: "Run",
+    derivedRunCancel: "Cancel",
+    derivedCountLabel: "Edges derived",
+    derivedStateLabel: "Schedule",
+    derivedLastLabel: "Last run",
+    derivedOn: (mins: number) => `every ${mins} min`,
+    derivedOff: "off",
+    derivedNever: "never",
+    derivedAgo: (mins: number) =>
+      mins < 1
+        ? "just now"
+        : mins < 60
+          ? `${mins} min ago`
+          : `${Math.round(mins / 60)} h ago`,
+    derivedRun: "Run now",
+    derivedRunning: "Running…",
+    derivedNoChange: "Nothing changed.",
+    derivedChanged: (added: number, gone: number) =>
+      `${added} added · ${gone} retracted`,
+    derivedCapped: (n: number) => `${n} predicate(s) not closed fully`,
+    close: "Close",
+    // 派生边靠哪条规则来的。**四种都要有**——查不到的会退回原始 kind 串，
+    // 而那对读的人没有意义
+    ruleNames: {
+      transitive: "transitive",
+      symmetric: "symmetric",
+      inverse: "inverse",
+      sub_property: "sub-property",
+    } as Record<string, string | undefined>,
+    historyHint: "How this entity's record changed — and who changed it.",
+    historyEmpty: "Nothing recorded for this entity yet.",
+    historyKind: {
+      asserted: "Recorded",
+      corrected: "Interval corrected",
+      rejected: "Withdrawn",
+      /* 并入另一条断言：内容一字未少，不是撤回 */
+      merged: "Merged into an existing fact",
+      /* 实体合并。**两个方向分开说**——「吸收了谁」和「被谁吸收」在图上
+         是两件事，回滚也是按方向做的 */
+      merged_in: "Another entity was merged into this one",
+      merged_away: "Merged into another entity",
+      merge_reverted: "Merge undone",
+      /* 改的是节点上的类,一条事实都没动 */
+      retyped: "Type changed",
+      retype_reverted: "Type change undone",
+    } as Record<string, string>,
+    /* 对方实体已经不在了（库被清理过）：合并事件仍然要列出来 */
+    historyGoneEntity: "an entity that is gone",
+    historyEngine: "engine",
+    /* 有效区间的变化：修正后区间闭合到某个时点 */
+    historyClosedAt: (t: string) => `closed at ${t}`,
+    historyFrom: (t: string) => `from ${t}`,
+    historyOngoing: "open-ended",
+    historicalNote: (n: number) =>
+      `${n} past fact${n === 1 ? "" : "s"} not shown — see Timeline →`,
+    undated: "Undated",
+    /* 0064：句子没写时间，文档说了自己是哪天的。是「截至」，不是「自…起」 */
+    asOf: (date: string, by: string | null) =>
+      by ? `as of ${date} · ${by}` : `as of ${date}`,
+    /* 实体面板的 Relations：两节的标题、组尾的折、行上的证据开关 */
+    fromEntity: (name: string) => `From ${name}`,
+    toEntity: (name: string) => `To ${name}`,
+    openEntity: (name: string) => `Open ${name}`,
+    past: (n: number) => (n === 1 ? "1 past" : `${n} past`),
+    sources: (n: number) => (n === 1 ? "1 source" : `${n} sources`),
+    /* 名字一节（0041）：本名、简称、曾用名 */
+    names: "Names",
+    shownName: "shown name",
+    nameUntil: (d: string) => `until ${d}`,
+    removeName: "Remove",
+    // 问一句再移除：名字是事实，界面上没有再加回来的地方
+    removeNameAsk: "Remove this name?",
+    removeNameCancel: "Keep",
+    removeNameGo: "Remove",
+    nameRemoved: "Name removed",
+    timelineEmpty: "No dated facts yet.",
+    lastConfirmed: (d: string) => `confirmed ${d}`,
+    /* 三种来源共用一个标记（引擎接任对账、Review 裁决、有人手改），所以这句
+       不再声称是哪一种——加上人工编辑之后，原来那句「由对账闭合」会说错来源。
+       想知道是谁改的，History 有 actor 和时刻 */
+    correctedHint:
+      "This interval comes from a correction rather than a sentence in a document: " +
+      "automatic succession, a review decision, or someone editing it. " +
+      "The superseded assertion stays in the ledger — see History for who and when.",
+    /* ---- 人工修正有效区间（302） ---- */
+    editTime: "Correct the interval",
+    editTitle: "Edit entity",
+    timeStart: "Start",
+    timeEnd: "End",
+    /* 结束端的三态，与账本里的三种写法一一对应（见迁移 0003 的注释） */
+    timeEndOpen: "Still going",
+    timeEndUnknown: "Ended, date unknown",
+    timeEndDate: "Ended on",
+    /* 写多少位就是多少精度：2023 是「那一年」，2023-06 是「那个月」 */
+    timeFormat: "2023 · 2023-06 · 2023-06-15 · 2023-06-15T14:32Z",
+    timeBadDate:
+      "Use 2023, 2023-06, 2023-06-15, or a clock time with its zone such as 2023-06-15T14:32Z — a time without a zone is not a moment.",
+    timeNote: "Why (optional)",
+    timeNotePlaceholder: "The document says the first half of 2023",
+    timeSave: "Save",
+    timeCancel: "Cancel",
+    timeSaved: "Interval corrected",
+    timeSavedClosed: (n: number) =>
+      `Interval corrected — ${n} open fact${n === 1 ? "" : "s"} closed to match`,
+    timeSavedConflicts: (n: number) =>
+      `Interval corrected — ${n} conflict${n === 1 ? "" : "s"} need a ruling in Review`,
+    ongoing: "now",
+    /* 必须跟 ongoing 看得出区别：混淆这两个正是迁移 0046 要修的东西——
+       原文说 "former CEO"，界面却显示 now */
+    endedUnknown: "ended, date unknown",
+    stats: (n: number, e: number, active: number | null) =>
+      `${n} entities · ${e} facts${active === null ? "" : ` · ${active} active`}`,
+    /** 画布只画度数最高的一批。**说清楚画了多少、共多少**——从前这里写的是
+     *  上限，一个上万实体的库右上角永远是 150 */
+    statsCapped: (
+      shown: number,
+      total: number,
+      shownE: number,
+      totalE: number,
+      active: number | null,
+    ) =>
+      `showing ${shown} of ${total} entities · ${shownE} of ${totalE} facts${active === null ? "" : ` · ${active} active`}`,
+    cappedHint: (shown: number, total: number) =>
+      `The canvas draws the ${shown} best-connected entities of ${total}. Search to reach the rest.`,
+    stabilizing: "Stabilizing layout",
+    scrubUnitHint: "Step size for playback and for each bar",
+    scrubUnitYear: "Yr",
+    scrubUnitMonth: "Mo",
+    scrubUnitDay: "Dy",
+    scrubBarMerged: (n: number) => `each bar covers ${n} steps`,
+    allTime: "All time",
+    nowBtn: "Now",
+    play: "Play timeline",
+    pause: "Pause",
+  },
+  origin: {
+    ocr: (page: number | null) => (page === null ? "OCR" : `OCR · p. ${page}`),
+    transcribed: (span: string | null, speakers: string[]) =>
+      ["Transcribed", span, speakers.length > 0 ? speakers.join(", ") : null]
+        .filter(Boolean)
+        .join(" · "),
+    described: "Described by a model",
+    ocrHint: "Read from a scan or image. A character or digit may be misread.",
+    transcribedHint: "Transcribed from a recording. A name may be misheard.",
+    describedHint: "A model's description of an image. Nobody wrote or said these words.",
+    readBy: (model: string) => `Read by ${model}.`,
+  },
+  doc: {
+    backToLibrary: "← Back to Library",
+    sections: "sections",
+    section: "Section",
+    citedHere: "← cited here",
+    loading: "Loading…",
+    extracted: "Extracted",
+    ongoing: "now",
+    /** `#610`：`doc_time` 是从文件里读出来的日期；与上传时刻是两件事 */
+    docDate: "Document date",
+    docDateFromContent: "Detected from the filename or first line",
+    uploadedAt: "Uploaded",
+  },
+  settings: {
+    title: "Administration",
+    tabModels: "Models",
+    tabMembers: "Users",
+    tabKbs: "Knowledge bases",
+    tabDeployment: "Deployment",
+    tabSso: "Single sign-on",
+    cardAccounts: "Accounts",
+    newUser: "Create user",
+    initialPassword: "Initial password (min. 8 characters)",
+    createUserBtn: "Create",
+    searchUsers: "Filter by name or email…",
+    deployment: {
+      openReg: "Allow self-registration",
+      openRegHint:
+        "When off, the sign-up form is closed and only admins can create accounts here.",
+      workers: "Background workers",
+      workersHint:
+        "An outer ceiling on how many jobs run at once (1–256), there to stop work piling up " +
+        "without bound. The real throttle is the per-model limit below, so keep this comfortably " +
+        "above the sum of those. Takes effect immediately.",
+      workersApply: "Apply",
+      /* 真正的节流：约束来自供应商的速率限制，而那是按模型算的 */
+      modelConcurrency: "Model concurrency",
+      modelConcurrencyHint:
+        "How many calls a model will take at once. The limit that matters belongs to the " +
+        "provider and is per model — a local Ollama may manage two, a hosted API fifty. " +
+        "Background work (extraction, resolution, indexing) waits for a slot; chat and search " +
+        "never do. Takes effect immediately.",
+      /* 部署级默认值：新建库时用。名字刻意不叫"系统语言" */
+      ontologyLang: "Default ontology language",
+      ontologyLangHint:
+        "The language new knowledge bases start their ontology in — class descriptions go " +
+        "into the extraction prompt, so this follows the documents you expect, not the " +
+        "interface. Each knowledge base can change its own afterwards. " +
+        "Interface language is a per-reader choice in the account menu.",
+      modelDefault: "Default",
+      modelReset: "Reset",
+      modelResetHint:
+        "Drop this model's own limit and fall back to the default.",
+    },
+    datasources: {
+      tab: "Data sources",
+      title: "Data sources",
+      hint:
+        "Read-only database connections for asking questions about your data in Chat. " +
+        "Register connections here; each knowledge base mounts the ones it may query.",
+      name: "Name",
+      connString: "Connection string — the scheme picks the engine",
+      // 每种写法各一行；令牌放 password 位，Databricks 的路径就是控制台里的 httpPath
+      connSchemes:
+        "postgres://user:pass@host:5432/db\n" +
+        "mysql://user:pass@host:3306/db   (MariaDB, TiDB, OceanBase, Doris, StarRocks)\n" +
+        "trino://user[:pass]@host:8080/catalog[/schema]   (Iceberg, Delta Lake, Hive)\n" +
+        "databricks://:TOKEN@host/sql/1.0/warehouses/ID?catalog=main\n" +
+        "snowflake://:TOKEN@account.snowflakecomputing.com/DB/SCHEMA?warehouse=WH",
+      add: "Add data source",
+      newTitle: "New data source",
+      engine: "Engine",
+      engineRaw: "Connection string",
+      optional: "(optional)",
+      testConn: "Test connection",
+      testing: "Testing…",
+      colConn: "Connection",
+      colStatus: "Status",
+      grantsNoneShort: "Not granted",
+      grantsCount: (n: number) => (n === 1 ? "1 workspace" : `${n} workspaces`),
+      fHost: "Host",
+      fPort: "Port",
+      fDatabase: "Database",
+      fUser: "User",
+      fPassword: "Password",
+      fCatalog: "Catalog",
+      fSchema: "Schema",
+      fToken: "Token",
+      fWarehouse: "Warehouse",
+      fWarehouseId: "Warehouse ID",
+      fAccount: "Account host",
+      test: "Test",
+      testOk: "Connected",
+      testFail: "Failed",
+      neverTested: "Untested",
+      remove: "Remove",
+      empty: "No data sources registered yet. Register one below.",
+      grants: "Available to",
+      grantsHint:
+        "Which workspaces may use this source. Once granted, KB admins in those workspaces choose whether to mount it — " +
+        "this controls what they can reach, not what they have mounted.",
+      grantsNone:
+        "Not granted to any workspace — no knowledge base can mount it.",
+      grantAdd: "Grant a workspace…",
+      grantRevoke: "Revoke",
+      grantRevoked: (n: number) =>
+        n === 0
+          ? "Revoked."
+          : `Revoked, and unmounted it from ${n} knowledge base(s).`,
+    },
+    sso: {
+      title: "Single sign-on",
+      hint:
+        "Sign-in through an identity provider (OIDC), configured with environment variables (see " +
+        ".env.example). People link their own identity from their account page; an administrator " +
+        "can see and remove links but can't create one for someone else.",
+      disabled:
+        "Not configured on this deployment. Set UTOPIA_OIDC_ISSUER, UTOPIA_OIDC_CLIENT_ID and " +
+        "UTOPIA_OIDC_REDIRECT_URI (and, if the provider needs one, UTOPIA_OIDC_CLIENT_SECRET) " +
+        "and restart.",
+      issuer: "Issuer",
+      clientId: "Client ID",
+      redirectUri: "Redirect URI",
+      colUser: "User",
+      colSubject: "Subject",
+      empty: "Nobody has linked an identity yet.",
+      unlink: "Unlink",
+      unlinkTitle: (email: string) => `Unlink ${email}?`,
+      unlinkHint:
+        "They won't be able to sign in with SSO until they link again. Sessions already open " +
+        "stay signed in; deactivate the account to cut access immediately.",
+    },
+    kbs: {
+      hint:
+        "Every knowledge base in this deployment. Open ones are readable by all members; " +
+        "restricted ones are invite-only. Creating a knowledge base is an admin action — " +
+        "members switch between them from the top bar.",
+      defaultChip: "Default",
+      newKb: "New knowledge base",
+      packsLabel: "Bundled ontologies",
+      packsHint: "Optional, and more can be imported later.",
+      packsPick: "Search packs…",
+      packsNone: "None — the ontology grows out of the documents",
+      packsCount: (c: number, p: number) => `${c} classes · ${p} properties`,
+      name: "Name",
+      description: "Description",
+      visibility: "Visibility",
+      visOpen: "Open — everyone in this deployment",
+      visRestricted: "Invited only",
+      create: "Create",
+      openSettings: "Settings",
+      empty: "No knowledge bases yet. Create the first one above.",
+      docs: (n: number) => `${n} docs`,
+    },
+    modelsIntro:
+      "OpenAI-compatible protocol — DeepSeek, Qwen, GLM, Ollama, vLLM all work. Fully on-prem friendly.",
+    chatModel: "Chat model",
+    reasoningEffort: "Reasoning effort",
+    reasoningDefault: "endpoint default",
+    reasoningHint:
+      "Reasoning models think before they answer; for extraction nine tenths of the output was thinking. minimal turns it off without changing the answer.",
+    embedModel: "Embedding model (optional, enables semantic search)",
+    baseUrl: "Base URL",
+    model: "Model",
+    apiKey: "API key",
+    keyConfigured: "(configured — leave blank to keep)",
+    save: "Save",
+    saving: "Saving…",
+    saved: "Saved",
+    test: "Test connection",
+    testing: "Testing…",
+    chatLabel: "Chat",
+    embedLabel: "Embedding",
+    ok: (reply: string) => `Reachable and authenticated (${reply})`,
+    okDim: (dim: number) => `Reachable and authenticated (dim ${dim})`,
+    unsaved: "Unsaved changes. Save this card to test them.",
+    readersTitle: "Reading scans and recordings",
+    readersIntro:
+      "Scanned PDFs, images and recordings have no text to parse, so each needs its own reader. They are set apart from chat so that sensitive files can stay on your own servers. A file that arrives before its reader waits, and the message center says so; saving the reader reads it.",
+    ocrService: "Document reading (OCR)",
+    ocrHint:
+      "A MinerU service (mineru-api). It reads each page's layout first, so every passage keeps its page and position.",
+    serviceUrl: "Service URL",
+    backend: "Backend (optional)",
+    transcribeModel: "Transcription",
+    transcribeHint:
+      "An OpenAI-compatible endpoint that labels speakers (diarized_json), such as gpt-4o-transcribe-diarize. A transcript that cannot say who spoke is not used.",
+    okVersion: (version: string) => `Reachable (MinerU ${version})`,
+    okReachable: "Reachable and authenticated",
+    savedRequeued: (n: number) =>
+      `Saved. ${n} waiting ${n === 1 ? "file is" : "files are"} being read.`,
+  },
+  ontology: {
+    title: "Ontology",
+    hint: "Classes & properties",
+    tabClasses: "Classes",
+    colName: "Name",
+    multiParentHint: "This class has more than one parent; the indentation follows one of them, and the Parent column lists them all",
+    colSignature: "Subject → Object",
+    colInstances: "Instances",
+    colFacts: "Facts",
+    colOnClass: "On class",
+    colDatatype: "Type",
+    colUnit: "Unit",
+    colSingleValued: "Single-valued",
+    yes: "Yes",
+    rowsShown: (n: number) => `${n} rows`,
+    viewTable: "Table",
+    switchToTable: "Switch to table view",
+    switchToGraph: "Switch to graph view",
+    viewDiagram: "Graph",
+    axiomTransitive: "Transitive",
+    axiomSymmetric: "Symmetric",
+    axiomAsymmetric: "Asymmetric",
+    axiomIrreflexive: "Irreflexive",
+    tabProperties: "Properties",
+    newClass: "New class",
+    newSubClass: "New sub-class",
+    newProperty: "New property",
+    filter: "Filter…",
+    missesShort: "Unmatched",
+    uniquenessShort: "Overlaps",
+    refineShort: "Refine types",
+    /* ---- 业务规则（0021 / #277）---- */
+    rulesShort: "Business rules",
+    ruleExpressionReadOnly: "This definition is read-only in this form. You can edit its name and description without changing its expressions or conditions.",
+    ruleUnknownExpression: "Unsupported expression (read-only)",
+    ruleDependencies: "Potential dependencies",
+    ruleDependenciesHint: "Candidates from rule definitions, not proof of execution. Readings, conditions and time determine what actually runs; disabled definitions are included.",
+    ruleDependenciesIncomplete: "Some definitions or classes could not be read completely. This list may be incomplete.",
+    rulePotentialProducers: "May receive input from",
+    rulePotentialConsumers: "May provide input to",
+    ruleDependenciesEmpty: "No candidates found in the readable definitions.",
+    rulesTitle: "Business rules",
+    /* 说清三件事：谁写的、结论是什么身份、什么时候重算。第三件最容易被误解成
+       「保存就生效」，而它其实等下一轮物化 */
+    rulesHint: "Rules that decide a class or compute a value from an entity's own attributes. A conclusion is derived and lapses when its premises do.",
+    rulesEmpty: "No rules yet.",
+    rulesNoMatch: "No rule matches that.",
+    /** 搜的是整条规则，不只是名字——判据里的谓词和值也在里面 */
+    ruleSearch: "Search rules, attributes, values",
+    ruleNew: "New rule",
+    /* 按不下去时必须说清为什么。**一条规则判的是属性的值**，没有属性就无从写起——
+       而一个灰着的按钮不解释，读者只会以为坏了 */
+    ruleNeedsAttribute:
+      "A rule tests an attribute's value, and this ontology has none yet. Open a class and add one under Attributes.",
+    ruleNeedsClass: "Add a class first — a rule concludes one.",
+    ruleColRule: "Rule",
+    ruleColDerived: "Derived",
+    ruleColStatus: "Status",
+    /* 条件之间是合取。**写「并且」而不是一个点号**——符号读不出「全都要成立」，
+       而那正是规则最容易被误读的地方 */
+    ruleAnd: "and",
+    /** 组与组之间。**读起来是「或者」而不是符号**——同一条判据的另一种满足方式 */
+    ruleOr: "or",
+    ruleWhere: "where",
+    ruleDropCondition: "Remove this condition",
+    ruleOperandPlaceholder: (kind: string): string =>
+      kind === "set"
+        ? "gas anomaly, post-effect gas anomaly"
+        : kind === "range"
+          ? "8 - 12"
+          : "12.0",
+    ruleName: "Name",
+    ruleNamePlaceholder: "Gas-bearing well",
+    ruleDescription: "What it means (optional)",
+    ruleSubject: "Applies to",
+    ruleSubjectHint: "and its subclasses",
+    ruleConcludes: "Concludes",
+    ruleConcludesTyping: "the class",
+    ruleConcludesAttribute: "the attribute",
+    ruleConcludesRelation: "the relation",
+    ruleConcludesRelationText: (join: string, conclude: string): string =>
+      `${conclude} from X through ${join}`,
+    ruleSideX: "X",
+    ruleSideY: "Y",
+    /* 从前是「当以下全部成立」。**一条规则现在可以写第二种情况**，那句话就
+       不再是真的——标签退回一个「当」，全不全由下面那句说明交代 */
+    ruleConditions: "When",
+    ruleConditionsHint:
+      "The conditions in a block must all hold. Add another way and any one block is enough.",
+    ruleAddCondition: "Add a condition",
+    /** 加一整块：同一条判据的另一种满足方式，不是另一条规则 */
+    ruleAddGroup: "Another way",
+    ruleOpGt: "is above",
+    ruleOpGte: "is at least",
+    ruleOpLt: "is below",
+    ruleOpLte: "is at most",
+    ruleOpBetween: "is between",
+    ruleOpIn: "is one of",
+    ruleOpNotIn: "is not one of",
+    ruleOpPresent: "is recorded",
+    ruleOperandNumber: "12.0",
+    ruleOperandSet: "gas anomaly, post-effect gas anomaly",
+    ruleOperandSetHint: "comma separated",
+    ruleSave: "Save rule",
+    ruleSaved: "Rule saved",
+    ruleDeleted: "Rule deleted",
+    ruleDelete: "Delete",
+    ruleDeleteConfirm: (n: string) => `Delete “${n}”? What it concluded goes with it.`,
+    ruleEnabled: "On",
+    ruleDisabled: "Off",
+    /* 数字是「此刻凭它成立的结论条数」，不是历史总数 */
+    ruleDerivedCount: (n: number) =>
+      n === 1 ? "1 entity" : `${n} entities`,
+    ruleRun: "Run now",
+    ruleRunning: "Running…",
+    /* 跑完要说清三件事，因为图会自己变：命中多少、新落多少、退了多少 */
+    ruleRunDone: (hits: number, inserted: number, invalidated: number) =>
+      `${hits} matched · ${inserted} new · ${invalidated} retired`,
+    ruleRunCapped: (n: number) =>
+      `${n} entity/rule pairs had too many readings to expand; their conclusions are incomplete`,
+    /** 链跑满上限就停了。**说出来**：没接上的那一环与「不满足」长得一样 */
+    ruleRunRoundsCapped: (n: number): string =>
+      `Rules kept concluding after ${n} rounds; anything further down the chain was not reached`,
+    ruleNeedsCondition: "A rule needs at least one condition.",
+    /* ---- 打磨：可点的计数、常驻的 capped 提示、改结论 ---- */
+    ruleEdit: "Edit",
+    ruleEditing: "Editing",
+    ruleMatchesTitle: "What it marks",
+    ruleMatchesEmpty: "Nothing right now.",
+    ruleVersion: (n: number) => `v${n}`,
+    ruleHistoryTitle: "How this rule has read",
+    ruleHistoryEmpty: "No history yet.",
+    ruleVersionCurrent: "current",
+    ruleVersionSince: (from: string, to: string | null) => (to ? `${from} to ${to}` : `since ${from}`),
+    ruleVersionStanding: (n: number) => (n === 1 ? "1 conclusion stands on it" : `${n} conclusions stand on it`),
+    /* 前提要读成「凭什么」，所以用 because 起头而不是干列 */
+    ruleMatchBecause: (premises: string) => `because ${premises}`,
+    /* 同一个实体会因为不同时段的读数出现好几次——不写出这一段就像重复了 */
+    ruleMatchSpan: (from: string, to: string | null) =>
+      to ? `${from} – ${to}` : `since ${from}`,
+    ruleMatchesMore: (shown: number, total: number) =>
+      `showing ${shown} of ${total}`,
+    /* 常驻在卡片上，而不只在跑完那一刻的 toast 里——少推几条与「不满足」
+       在结果里长得一样，读的人得随时看得见 */
+    ruleCappedChip: "incomplete",
+    ruleCappedHint:
+      "Some entities carry too many readings of the same attribute to expand every combination, so this rule's conclusions for them are incomplete.",
+    refineTitle: "Refine types",
+    refineHint: "Narrow entity types that came out broader than they should be.",
+    refinePreview: "Look first",
+    refineLooking: "Looking…",
+    refineRun: "Run and apply",
+    refineRunning: "Running…",
+    refineNothing: "Nothing to refine.",
+    refineCandidates: (n: number) => `${n} entities would be considered`,
+    refineNoCandidates: "Retrieval found no class for this one.",
+    refineModelSays: (t: string) => `the model called it “${t}”`,
+    refineRetyped: (n: number) => `${n} retyped automatically`,
+    refineUndo: "Undo this batch",
+    refineUndone: (n: number) => `${n} put back`,
+    refineForReview: (n: number) => `${n} need your call`,
+    refineCrossesAxis: "different axis",
+    refineApprovePair: "Approve this class pair",
+    refineLeftAlone: (n: number) => `${n} left alone`,
+    refineTopCandidate: (c: string) => `closest class was ${c}`,
+    instances: "Instances",
+    instanceFacts: (n: number) => `${n} facts`,
+    description: "Description",
+    descriptionHint:
+      "Guides the extractor: what belongs here, with a couple of examples. Fed straight into the extraction prompt.",
+    attributes: "Attributes",
+    attributesHint:
+      "Literal-valued fields of this class (a person's salary, a contract's amount). Extracted with evidence and history, like any fact.",
+    newAttribute: "New attribute",
+    /* 编辑弹窗（面板只展示，改动在弹窗里）：标题与面板里的入口 */
+    edit: "Edit",
+    editClass: "Edit class",
+    editProperty: "Edit property",
+    editAttribute: "Edit attribute",
+    connectTitle: "Connect a relationship",
+    connectOpen: "Connect an existing relationship…",
+    noDescription: "No description yet.",
+    axiomsNone: "None declared.",
+    attrDatatype: "Value type",
+    attrUnit: "Unit",
+    attrUnitHint: "optional — e.g. CNY, %",
+    attrSingle: "Single-valued — a new value closes the previous one",
+    datatypeNames: {
+      text: "Text",
+      number: "Number",
+      date: "Date",
+      bool: "Boolean",
+    } as Record<string, string>,
+    cancel: "Cancel",
+    key: "Key",
+    label: "Label",
+    color: "Color",
+    shapeColor: "Shape & color",
+    parent: "Parent class",
+    noParent: "(top level)",
+    subclasses: "Subclasses",
+    qualifiers: "Edge attributes",
+    noQualifiers: "None",
+    qualifiersHint: "Attributes an edge of this relation may carry, e.g. amount on invested_in",
+    noSubclasses: "None",
+    disjoint: "Cannot also be",
+    disjointHint:
+      "Classes nothing can belong to at the same time. A Person is not an Organisation. The consistency check uses this to find classes that can never have an instance.",
+    noDisjoint: "None declared yet",
+    disjointWithParent:
+      "This class inherits from a class it says it cannot be — nothing could ever satisfy it.",
+    /* 多父时左栏只能画一处，说明画在哪一支下 */
+    primaryParentHint: "Shown in the tree under the first one.",
+    /* 类型签名。措辞要说清它是引导不是闸门——本体写错时模型仍可覆盖 */
+    signature: "Type signature",
+    signatureHint:
+      "Which classes this relation connects. It goes into the extraction prompt as a hint, " +
+      "not a gate: it steers the model as it writes, and the text still wins when the " +
+      "ontology is wrong.",
+    domainLabel: "Subject",
+    rangeLabel: "Object",
+    anyType: "Any type",
+    searchTypes: "Search classes…",
+    temporal: "Temporal semantics",
+    temporalState: "State (has interval)",
+    temporalEvent: "Event (point in time)",
+    temporalEternal: "Eternal (timeless)",
+    functional: "Functional (single value at a time)",
+    inverseFunctional: "Inverse functional (one subject per object at a time)",
+    axioms: "Axioms",
+    axiomsHint:
+      "What this relation guarantees. These are not descriptions — they change what the system does: the temporal engine closes old values, and the reasoning engine adds edges to the graph.",
+    functionalHint:
+      "One subject, one value at a time. A new value closes the old one.",
+    inverseFunctionalHint: "One object, one subject. A project has one lead.",
+    transitive: "Transitive",
+    transitiveHint: "A→B and B→C means A→C. The engine will add those edges.",
+    symmetric: "Symmetric",
+    symmetricHint: "A→B means B→A. The engine will add the other direction.",
+    asymmetric: "Asymmetric",
+    asymmetricHint:
+      "A→B rules out B→A. Both directions get reported as a contradiction.",
+    irreflexive: "Irreflexive",
+    irreflexiveHint: "Nothing can point at itself through this relation.",
+    axiomConflict:
+      "Symmetric and asymmetric together hold only for a relation with no facts at all — one of the two is wrong.",
+    noLink: "None",
+    inverseOf: "Inverse",
+    inverseOfHint:
+      "The relation that says the same thing the other way round. Declare it on one side only — the other direction follows.",
+    subPropertyOf: "Super-property",
+    subPropertyOfHint:
+      "The broader relation this one is a special case of. Stating the specific one also states the broader one.",
+    linkMeansInverse: (p: string, q: string) =>
+      `A ${p} B also means B ${q} A.`,
+    linkMeansSuper: (p: string, q: string) => `A ${p} B also means A ${q} B.`,
+    usage: (n: number) => `${n} in use`,
+    builtin: "built-in",
+    save: "Save",
+    delete: "Delete",
+    deleteBlocked: "In use — cannot delete",
+    /* ---- OWL / RDFS 导入 ---- */
+    importShort: "Import",
+    importTitle: "Import an ontology",
+    importHint: "Import an OWL or RDFS file (.owl, .rdf, .ttl). Classes and properties are matched by IRI, so importing a newer version of the same vocabulary updates what is already here.",
+    importPick: "Choose file",
+    importChange: "Choose another",
+    importReading: "Reading…",
+    importApplying: "Importing…",
+    importApply: "Import",
+    importCancel: "Cancel",
+    importParsed: (fmt: string, triples: number) =>
+      `${fmt === "rdfxml" ? "RDF/XML" : "Turtle"} · ${triples.toLocaleString()} triples`,
+    importNothing:
+      "Nothing to import — no classes or properties found in this file.",
+    /* 计划三列：新建 / 更新 / key 被占 */
+    importWillCreate: (n: number) => `${n} new`,
+    importWillUpdate: (n: number) => `${n} updated`,
+    importKeyTaken: (n: number) => `${n} skipped`,
+    importClasses: "Classes",
+    importRelations: "Relations",
+    importAttributes: "Attributes",
+    /* 属性还落不了库：它们要 domain，而 domain 要等类先建好并解析 IRI */
+    importAttributesLater:
+      "Parsed, but not created yet — attributes need a class to hang from, which lands in the next step.",
+    /* 预览必须警告的第一件事：functional 会让时序引擎自动关掉旧事实。
+       part_of 那次一个错误的唯一性声明造了 59 条假冲突 */
+    warnFunctional: (n: number) =>
+      `${n} ${n === 1 ? "relation declares" : "relations declare"} itself functional`,
+    warnFunctionalBody:
+      "A functional relation may hold one value at a time, so a new fact automatically closes the previous one. When the vocabulary claims uniqueness your data does not keep, that shows up as a queue of conflicts. Review these after importing.",
+    /* 第二件事：description 逐字进抽取提示词，没有它的类抽得明显差 */
+    warnNoDescription: (n: number) =>
+      `${n} ${n === 1 ? "class arrives" : "classes arrive"} with no description`,
+    warnNoDescriptionBody:
+      "A class description goes verbatim into the extraction prompt — it is the only thing telling the model what belongs there. Write one for these, or they will quietly under-extract.",
+    /* key 撞了：报告不解决。自动加后缀会让下次重导入认不出自己上次建的是哪个 */
+    warnKeyTaken: (n: number) =>
+      `${n} ${n === 1 ? "key is" : "keys are"} already taken`,
+    warnKeyTakenBody:
+      "Something else already holds this key under a different identity. These are left alone — rename the existing one first if you want the imported version instead.",
+    /* 占位者没有 IRI = 这库里手工建的或内置的，那句话比一个空 IRI 有用 */
+    importTakenBy: (iri: string | null) =>
+      iri
+        ? `taken by ${iri}`
+        : "taken by an entry defined in this knowledge base",
+    /* 出现过但今天不投影的公理，按名字与次数列出——"暂未投影"不是"已跳过" */
+    importUnprojected: "Not projected yet",
+    importUnprojectedBody:
+      "Axioms this file uses that Utopia does not consume yet. Nothing is lost: the source file is stored as uploaded, so a later version can project them.",
+    importDone: (created: number, updated: number) =>
+      `Imported — ${created} classes created, ${updated} updated.`,
+    importHistory: "Previous imports",
+    importColFile: "File",
+    importColFormat: "Format",
+    importColSize: "Size",
+    importColTriples: "Triples",
+    importColWhen: "Imported",
+    importDetail: "Detail",
+    importCreatedN: (n: number) => `${n} new`,
+    importUpdatedN: (n: number) => `${n} updated`,
+    importSkippedN: (n: number) => `${n} skipped`,
+    importTakenN: (n: number) => `${n} key taken`,
+    /* 细账的行名。**动词都是过去式**：这一屏说的是那一次导入做过什么 */
+    statClassesCreated: "Classes created",
+    statClassesUpdated: "Classes updated",
+    statClassesTaken: "Classes whose key was taken",
+    statClassesNoDesc: "Classes without a description",
+    statTriples: "Triples read",
+    statRelationsSeen: "Relations in the file",
+    statRelationsCreated: "Relations created",
+    statRelationsUpdated: "Relations updated",
+    statFunctional: "Relations declared functional",
+    statInverseLinked: "Inverse properties linked",
+    statSubPropertyLinked: "Sub-properties linked",
+    statAttributesSeen: "Attributes in the file",
+    statAttributesCreated: "Attributes created",
+    statAttributesSkipped: "Attributes skipped",
+    /* 跳过的理由。**每一条都要说得出下一步动哪里**，不然报了也白报 */
+    skipReason: {
+      key_taken: "key already in use",
+      unusable_range: "range cannot be a value type",
+      no_domain: "no domain — it never says which class it belongs to",
+      domain_skipped: "its domain class was skipped too",
+      unknown_domain: "domain class is not in this base",
+    } as Record<string, string | undefined>,
+    importNoHistory: "No imports yet.",
+    importBy: (who: string, when: string) => `${who} · ${when}`,
+    importSize: (bytes: number) =>
+      bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(0)} KB`,
+    misses: "Unmatched from extraction",
+    missesHint: "Types and predicates the extractor produced outside the ontology, to judge what the ontology still lacks.",
+    /* ---- 一端挂着两个以上开放值的谓词（#341） ----
+       文案克制：状态一句话，后果一句话，动作在按钮上。这一档的读者要判断的是
+       「这条关系一次只能有一个值吗」，不是读一篇关于双时态的说明 */
+    uniqueness: "Overlapping values",
+    uniquenessHint: "Say which relations may hold only one value at a time, and a new value will end the old one on its own.",
+    uniquenessEmpty: "No overlaps. Every holder has at most one open value.",
+    /* 主语侧 / 宾语侧：说人话，不写 functional / inverse functional */
+    uniquenessSubject: (n: number) =>
+      `${n} subject${n === 1 ? "" : "s"} with two or more open values`,
+    uniquenessObject: (n: number) =>
+      `${n} value${n === 1 ? "" : "s"} held open by two or more subjects`,
+    /* 按钮按下去会动账本，所以先说清动多少 */
+    uniquenessEffect: (close: number, review: number) =>
+      review > 0
+        ? `Closes ${close}, sends ${review} to review`
+        : `Closes ${close}`,
+    uniquenessDeclare: "Declare and close",
+    /* 声明过了、只是还没对过账（导入的，或声明之前就在的行） */
+    uniquenessReconcile: "Close them",
+    uniquenessDeclared: "Declared",
+    uniquenessBusy: "Closing…",
+    uniquenessDone: (close: number, review: number) =>
+      review > 0
+        ? `Closed ${close} · ${review} in Review`
+        : `Closed ${close}`,
+    uniquenessSince: (d: string) => `since ${d}`,
+    dismiss: "Dismiss",
+    dismissed: (n: number) => `Dismissed (${n})`,
+    /* 数字是**忽略之后**还在涨的那个——这一行的全部意义就在于此：
+       当初"只出现过一次"的判断依据可能早就不成立了 */
+    dismissedHint:
+      "Still counted, but kept out of suggestions. If one has grown since you dismissed it, restore it.",
+    restore: "Restore",
+    suggest: "Suggest with AI",
+    suggesting: "Analyzing…",
+    noMisses: "No unmatched types — the ontology covers your corpus.",
+    approve: "Add",
+    /* 映射那一档的按钮。刻意不叫 Add——它不加东西，本体里已经有了。
+       两个按钮都写 Add 的话，"已经有了"这件事在界面上就消失了 */
+    mapOver: "Use existing",
+    /* 影响面：采纳一个提案会把多少条无谓词事实认过去。
+       没有这一句，"Add" 只是凭空多一个空关系 */
+    willRemap: (n: number) =>
+      n === 1 ? "reclassifies 1 fact" : `reclassifies ${n} facts`,
+    adopted: (n: number) =>
+      n === 1
+        ? "Added — 1 fact reclassified"
+        : `Added — ${n} facts reclassified`,
+    /* 一部分值换不动这个类型就没被改写。只报改写了多少条是报喜不报忧 */
+    adoptedPartly: (moved: number, left: number) =>
+      `Added — ${moved} reclassified, ${left} left behind (value did not fit the type)`,
+    /* 撤销：采纳改写了成批事实，没有回头路的话没人敢点第一下 */
+    undoAdopt: (key: string, n: number) =>
+      `${key} added, ${n} fact${n === 1 ? "" : "s"} reclassified`,
+    undoAdoptBtn: "Undo",
+    reverted: (n: number) =>
+      n === 1 ? "Reverted — 1 fact restored" : `Reverted — ${n} facts restored`,
+    undoKeepsRelation: "The relation stays; only the facts move back.",
+    /* 撤销要二次确认：它一次改回成批事实 */
+    undoTitle: "Undo this ontology change?",
+    undoHint: (n: number) =>
+      `${n} fact${n === 1 ? "" : "s"} will go back to “related to”. The relation itself stays — ` +
+      `nothing is deleted, and you can adopt it again later.`,
+    undoConfirm: "Undo",
+    undoCancel: "Keep",
+    /* 自动扩本体的通知：默认开启的前提是它的动作可见且可退。
+       只记在审计台账里不算可见——那是查证用的，不是通知用的 */
+    autoRanTitle: "Utopia extended this ontology from your documents",
+    autoRanBody: (rels: string[], facts: number) =>
+      `Added ${rels.join(", ")} · ${facts} fact${facts === 1 ? "" : "s"} reclassified`,
+    autoRanOff: "Turn this off in knowledge base settings.",
+    /* 批量：常见情形是"这些都对"，一条条点是把一个决定拆成八个 */
+    addAll: (n: number) => `Add all ${n}`,
+    addingAll: "Adding…",
+    addAllLabel: "batch",
+    addAllPartial: (keys: string[]) =>
+      `Some could not be added: ${keys.join(", ")} — the rest went through.`,
+    proposals: "AI proposals",
+    keyHint: "lowercase_snake_case",
+    /* ---- 0061: the ontology agent and its questions ---- */
+    askAgent: "Ask the agent",
+    askAgentHint:
+      "Proposes classes and properties from phrases and kind words the ontology does not cover yet, judged against the competency questions.",
+    agentQueued: "The agent is looking — proposals appear here when it is done.",
+    agentWaiting: "Agent working…",
+    agentChip: "agent",
+    servesQuestions: (n: number) =>
+      n === 1 ? "serves 1 question" : `serves ${n} questions`,
+    bindsShapes: (n: number) =>
+      n === 1 ? "binds 1 phrase shape" : `binds ${n} phrase shapes`,
+    bindsKindWords: (n: number) =>
+      n === 1 ? "1 kind word" : `${n} kind words`,
+    closestExisting: (key: string, label: string) => `closest: ${key} ${label}`,
+    rejectProposal: "Reject",
+    rejectReasonPrompt:
+      "Why not? (optional — the agent reads it before proposing again)",
+    rejectedProposal: "Rejected",
+    questions: "Competency questions",
+    questionsHint:
+      "What this knowledge base should be able to answer. The agent proposes classes and properties that serve these; they are the ontology's acceptance test.",
+    questionPlaceholder: "e.g. Which companies did each founder start, and when?",
+    addQuestion: "Add",
+    noQuestions:
+      "No questions yet. Without them the agent judges proposals only by the phrases documents use.",
+    retireQuestion: "Retire",
+    deleteQuestion: "Delete",
+    questionAdded: "Question added",
+    questionRetired: "Question retired",
+    askQuestions: "Ask the agent for questions",
+    askQuestionsHint:
+      "Proposes questions from what the documents say most. They wait here until you accept them.",
+    questionsQueued: "The agent is writing questions — they appear here when it is done.",
+    acceptQuestion: "Accept",
+    questionAnswered: "answered",
+    questionUnanswered: "not answered",
+    /* 回答从哪里来的（competency.mjs 记的 via） */
+    questionVia: { graph: "from the graph", text: "from text", both: "graph and text" } as Record<string, string>,
+    questionsScore: (answered: number, checked: number) =>
+      `${answered} of ${checked} answered`,
+    questionsScoreHint:
+      "Accepted questions the competency bench asked over the graph, and how many it answered.",
+    viaGraph: (withGraph: number, graphOnly: number) =>
+      `${withGraph} with graph facts · ${graphOnly} graph only`,
+    viaGraphHint:
+      "Of the answered questions, how many were answered after fetching facts from the graph, and how many without reading document text at all. An answer read from text alone did not need the ontology.",
+    proposalsChanged: (changed: number, decided: number) =>
+      `${changed} of ${decided} proposals changed`,
+    proposalsChangedHint:
+      "Of the agent's proposals people decided on, how many were rejected or edited before adoption.",
+    /* ---- Schema diagram ---- */
+    schemaDiagram: "Schema diagram",
+    /* 从前这句把「先加个类或导入 OWL 文件」说成了开始的前提，而本体本来就
+       从语料里长（0003，默认开）——那句话正是 #313 说的劝退点。现在只说状态，
+       动作留给左栏本来就有的 New class 与 Import */
+    schemaEmpty: "No classes yet. Extraction adds them as documents arrive.",
+    schemaFitView: "Fit view",
+    schemaZoomIn: "Zoom in",
+    schemaZoomOut: "Zoom out",
+    schemaLegendInheritance: "Inheritance",
+    schemaLegendRelation: "Relations",
+    schemaLegendDisjoint: "Disjoint",
+    schemaLegendRule: "Business rule",
+    schemaUnscoped: (n: number) => `Unscoped properties (${n})`,
+    schemaUnscopedHint:
+      "Not limited to specific classes, so no line on the canvas would be honest. Select one to inspect or edit it.",
+    // 取景说明：大本体只画库用到的类，这里说没画的有多少、为什么、去哪找
+    schemaMoreClasses: (n: number) => (n === 1 ? "+1 class" : `+${n} classes`),
+    schemaScopeInUseHint:
+      "Drawn: the classes with instances, and their ancestors. Pick any other class in the rail to add it.",
+    schemaScopeTopHint:
+      "No class has instances yet, so the top two levels are drawn. Pick any other class in the rail to add it.",
+    schemaClosePanel: "Close",
+    // 面板里的四段：定义（表单）/ 关系（边）/ 属性（字面值字段）/ 实例。
+    // 关系和属性是两种东西——左栏的 Properties 只列关系，属性挂在类下
+    schemaTabDefinition: "Definition",
+    schemaTabRelations: "Relations",
+    schemaTabAttributes: "Attributes",
+    schemaTabInstances: "Instances",
+    schemaAddRelationship: "New relationship…",
+    schemaCheckDefects: (n: number) =>
+      n === 1
+        ? "1 new ontology issue from this change"
+        : `${n} new ontology issues from this change`,
+    schemaCheckReview: "Review",
+    /** 画布上并成一条的关系边写的字 */
+    schemaBundle: (n: number) => `${n} relations`,
+    schemaOutgoing: "From this class",
+    schemaIncoming: "To this class",
+    schemaNoRelationships:
+      "This class takes part in no relationships. Its inheritance is shown under Definition.",
+    schemaNoInstances: "No instances yet.",
+    schemaConnectHint: "Connect using an existing relationship",
+    schemaConnectPlaceholder: "Search relationships…",
+    schemaConnectAs: "As",
+    schemaConnect: "Connect",
+    schemaConnected: (label: string) => `Connected via ${label}.`,
+  },
+  mapping: {
+    title: "Data mapping",
+    hint: "Which tables and columns each business concept points at, and how it is computed. Ask answers only from confirmed definitions.",
+    tabDefinitions: "Definitions",
+    tabSources: "Data sources",
+    filterAll: "All",
+    filterProposed: "Pending",
+    filterConfirmed: "Confirmed",
+    filterRejected: "Rejected",
+    searchPlaceholder: "Search concept, source or table…",
+    total: (n: number) => `${n} total`,
+    range: (from: number, to: number, total: number) =>
+      `${from}–${to} of ${total}`,
+    prev: "Previous",
+    next: "Next",
+    empty:
+      "No definitions yet. Mount a data source, then run Explore to have an agent propose a first batch.",
+    emptyFiltered: "No definitions match.",
+    rejectedHint:
+      "Rejected ones are listed too — otherwise “why was this concept never mapped?” has no answer.",
+    colConcept: "Concept",
+    colSource: "Source",
+    colDefinition: "How it is computed",
+    colStatus: "Status",
+    derivedBadge: "Derived",
+    noDefinition: "(empty)",
+    approve: "Confirm",
+    reject: "Reject",
+    selectPage: "Select this page",
+    selectMapping: (name: string, source: string) =>
+      `Select ${name} from ${source}`,
+    selected: (n: number) => (n === 1 ? "1 selected" : `${n} selected`),
+    edit: "Edit",
+    editTitle: "Revise definition",
+    fieldTable: "Table",
+    fieldExpr: "Expression",
+    fieldSql: "SQL",
+    fieldUnit: "Unit",
+    fieldSummary: "Summary",
+    fieldDerived: "Derived metric (computed, not a column)",
+    save: "Save",
+    cancel: "Cancel",
+    needOne: "Fill in at least one of table, expression or SQL.",
+    history: "Revision history",
+    historyHint:
+      "A full snapshot of the version before each change. Kept so “how was this number computed last quarter?” has an answer.",
+    historyEmpty: "Never revised.",
+    historyBy: (who: string) => `Revised by ${who}`,
+    historyUnknown: "a removed user",
+    sourcesHint:
+      "Read-only databases mounted here. Mounting ingests the schema so Ask knows which tables exist before writing SQL.",
+    mount: "Mount",
+    unmount: "Unmount",
+    syncSchema: "Refresh schema",
+    schemaSynced: (n: number) => `Schema ingested (${n} tables)`,
+    // Mounted, schema did not. **Do not call this a failed mount** — the source is mounted
+    schemaFailed:
+      "The data source is mounted, but its schema could not be ingested — Ask cannot see which tables exist. " +
+      "This is in the alert centre; check the connection, then use Refresh schema.",
+    explore: "Explore mappings",
+    exploreHint:
+      "An agent reads these schemas and proposes metric and dimension definitions. Proposals land in Pending; Ask uses them only once confirmed.",
+    exploreQueued:
+      "Exploration queued — proposals will appear under Pending. If nothing can be proposed, the alert bell will say so.",
+    // **最近一轮探索的账**——单看列表答不了「漏了多少」（#503）：
+    // 十二条提议对着八十列的宽表与刚好覆盖完一个小库长得一样。这条贴出来人
+    // 才能从「等量提议」里看出覆盖范围。
+    lastRun: (r: {
+      tables: number;
+      columns: number;
+      returned: number;
+      accepted: number;
+      truncated: boolean;
+    }) => {
+      const parts = [
+        `${r.tables} tables`,
+        `${r.columns} columns`,
+        `returned ${r.returned}`,
+        `accepted ${r.accepted}`,
+      ];
+      if (r.truncated) parts.push("(schema truncated)");
+      return `Last exploration: ${parts.join(" / ")}`;
+    },
+    lastRunMissing: "No exploration has run yet.",
+    sourcesEmpty: "No data sources mounted.",
+    sourcesNoneAvailable:
+      "No data sources registered yet — ask a deployment admin to register one.",
+    newConn: "Register a new connection",
+  },
+  review: {
+    title: "Review",
+    hint: "Duplicates & low-confidence facts",
+    tabHistory: "History",
+    empty: "Nothing to review — the graph is clean.",
+    historyEmpty: "No merges yet.",
+    // 左栏分类导航
+    railOverview: "Overview",
+    railPending: "Awaiting your nod",
+    railDuplicates: "Duplicates",
+    railConflicts: "Conflicts",
+    railUnconfirmed: "Unconfirmed",
+    railLowConfidence: "Low confidence",
+    railMappings: "Data mapping",
+    railViolations: "Axioms",
+    railDefects: "Ontology",
+    railAlignment: "Alignment",
+    railErrata: "Errata",
+    railDecisions: "Decisions",
+    railMerges: "Merges",
+    railAgent: "Agent",
+    categoryEmpty: "This queue is clear.",
+    // agent 的队列（0025）
+    agentTitle: "Agent",
+    agentHint:
+      "What the agent proposed or decided for this base, from the decisions people made here before. Answering here is your decision, and it becomes precedent for the next look.",
+    agentEmpty: "The agent has not looked at anything yet.",
+    agentActions: { merge: "Merge", keep: "Keep apart", unsure: "Unsure" } as Record<string, string>,
+    agentStatus: {
+      proposed: "Proposed",
+      applied: "Applied",
+      accepted: "Accepted",
+      overridden: "Overridden",
+      reverted: "Reverted",
+      superseded: "Superseded",
+    } as Record<string, string>,
+    agentSuggests: (action: string, pct: number) => `Agent: ${action.toLowerCase()} · ${pct}%`,
+    agentPrecedents: (n: number) => (n === 1 ? "1 precedent" : `${n} precedents`),
+    agentPrecedentMerged: "merged by a person",
+    agentPrecedentKept: "kept apart by a person",
+    agentPrecedentReverted: "merge reverted by a person",
+    agentPrecedentHabit: (merged: number, kept: number, reverted: number) =>
+      `This type pair in this base: ${merged} merged, ${kept} kept apart, ${reverted} reverted`,
+    agentAnsweredBy: (name: string, date: string) => `${name} · ${date}`,
+    agentAsks: "Asks:",
+    agentLookups: (n: number) => (n === 1 ? "1 lookup" : `${n} lookups`),
+    agentLookedAt: "Looked at",
+    overviewAgent: "Agent",
+    overviewAgentOff: "Governance is off for this base.",
+    overviewAgentSettings: "Turn it on in settings",
+    overviewAgentOpen: "Waiting for your answer",
+    overviewAgentApplied: "Decided on its own",
+    overviewAgentAccepted: "Proposals you accepted",
+    overviewAgentOverridden: (n: number) =>
+      n === 1 ? "1 overridden, last 30 days" : `${n} overridden, last 30 days`,
+    overviewAgentReverted: "Reverted by you",
+    overviewAgentRunning: (n: number) =>
+      n === 0 ? "The agent is working on its last cluster" : `The agent is working · ${n} pairs still to look at`,
+    overviewAgentQueue: (n: number) => (n === 1 ? "1 pair waiting for the agent" : `${n} pairs waiting for the agent`),
+    agentDeciding: "The agent is deciding this pair",
+    // 总览（#377）
+    overviewTitle: "Overview",
+    overviewHint:
+      "What the base needs from you: how much is waiting and for how long, what has been decided, and how much of the base is still provisional.",
+    overviewWaiting: "Waiting",
+    overviewAllClear: "Nothing is waiting — the base is clean.",
+    overviewOldest: (days: number) =>
+      days === 0 ? "oldest since today" : days === 1 ? "oldest since yesterday" : `oldest waiting ${days} days`,
+    overviewOpen: "Review these",
+    overviewDecided: "Decided",
+    overviewLast7: "Last 7 days",
+    overviewLast30: "Last 30 days",
+    overviewAutomatic: (n: number) =>
+      n === 1 ? "1 by the adjudicator" : `${n} by the adjudicator`,
+    overviewDaily: "Decisions per day, last 14 days",
+    overviewByAction: "By kind",
+    overviewByActor: "Who decided",
+    overviewNoDecisions: "No decisions in the last 30 days.",
+    overviewHealth: "Base health",
+    overviewFacts: (n: number) =>
+      n === 1 ? "1 fact currently held. Of it:" : `${n} facts currently held. Of them:`,
+    overviewContested: "Contested",
+    // 决策台账
+    decisionsTitle: "Decisions",
+    decisionsHint:
+      "Every review decision, by whom and when — snapshots taken at decision time, kept even after the underlying fact is gone.",
+    decisionsEmpty: "No decisions recorded yet.",
+    aiActor: "AI adjudicator",
+    decisionActions: {
+      "review.merge": "Merged",
+      "review.keep": "Kept apart",
+      "fact.confirm": "Confirmed",
+      "fact.reject": "Rejected",
+      "fact.nod_confirmed": "Confirmed a remembered fact",
+      "fact.nod_rejected": "Rejected a remembered fact",
+      "fact.close": "Closed",
+      "conflict.close_old": "Closed old",
+      "conflict.keep_both": "Kept both",
+      "conflict.reject_new": "Rejected new",
+      "merge.revert": "Reverted merge",
+      "merge.manual": "Merged manually",
+      "fact.time_corrected": "Time corrected",
+    } as Record<string, string>,
+    /** 升格给人裁决的原因。服务端存 code（可选 |detail），措辞在这里 */
+    escalated: {
+      escalate_no_model: "No chat model — the adjudicator could not run",
+      escalate_no_verdict: "The adjudicator returned no verdict",
+      escalate_entity_changed: "The entity changed while being adjudicated",
+      escalate_unsure: "The adjudicator was not confident enough",
+      /* 抽给人看的一份（0026）：机器有把握也不动手，detail 是它本来的答案 */
+      escalate_sample: "Sampled for a person; the adjudicator was confident",
+      /* 执行闸门（0027）：合并会立刻送出图外的东西，把握再高也留给人 */
+      escalate_impact: "Held for a person; the merge would not stay in the graph",
+      proposed: "The agent looked and left a proposal",
+      governed: "Decided by the agent from precedent",
+      namesake: "Two entities with this name in one document",
+      /* 画像分不开时的并列：分数是真的，所以百分比照常显示（与 namesake 的哨兵值不同） */
+      namesake_tie: "Same name, and the profiles cannot tell them apart",
+      shared_name: "Another entity already has this name",
+      /* 名字向量召回（0041 第 2 刀）：简称、另一种文字的同一个名字；只提议，裁决器判 */
+      name_vector: "A similar name, found by vector recall",
+      /* 名字互相包含：等值召回看不见，简称会静默变成第二个实体 */
+      contains: "One name contains the other",
+      ambiguous_name: "Same name, context did not settle it",
+      type_drift: "Same name arrived under a different type",
+      auto_merged: "Merged by the AI adjudicator",
+      kept_apart: "The AI adjudicator judged these different",
+    } as Record<string, string>,
+    /** 闸门留下的原因，按 kind 措辞；value 是谓词标签或一个数 */
+    impact: {
+      contradiction: (p: string) => `it would put two “${p}” facts on one entity`,
+      derived: (n: string) => `${n} derived facts rest on one side`,
+      answered: (n: string) => `one side was named in ${n} answers`,
+    } as Record<string, (v: string) => string>,
+    duplicates: "Possible duplicates",
+    duplicatesHint:
+      "Same name, different context. The AI adjudicates clear cases in the background; the rest wait for you. Merging is always reversible.",
+    stageAdjudicating: "AI adjudicating",
+    stageHuman: "Needs your decision",
+    similarity: (pct: number) => `${pct}% context similarity`,
+    factsCount: (n: number) => `${n} facts`,
+    noFacts: "No recorded facts",
+    merge: "Merge",
+    keep: "Keep separate",
+    /** 理由框（0026）。是一个问题，不是一张表：可以不答 */
+    rationalePlaceholder: "What told you? Optional",
+    // 重复项的类型筛选与批量裁决（#428）
+    typesAny: "All",
+    typesSame: "Same type",
+    typesConflict: "Types differ",
+    typesEmpty: "Nothing in this group.",
+    typesDiffer: (a: string, b: string) => `${a} / ${b}`,
+    typesDifferHint:
+      "The two sides are different kinds of thing. Merging them would fold one meaning into another.",
+    pickPair: "Select this pair",
+    selectPage: "Select this page",
+    selected: (n: number) => (n === 1 ? "1 selected" : `${n} selected`),
+    mergeSelected: "Merge selected",
+    keepSelected: "Keep selected apart",
+    batchDone: (ok: number, failed: number) =>
+      failed === 0
+        ? ok === 1
+          ? "1 pair decided"
+          : `${ok} pairs decided`
+        : `${ok} decided, ${failed} could not be — they stay in the queue`,
+    lowConfidence: "Low-confidence facts",
+    // 对齐队列（#725）
+    alignment: "The aligner could not settle these",
+    alignmentHint:
+      "A phrase between two kinds of thing, or a kind word, where the aligner's two votes disagreed. Pick the property or class the documents' words mean, or say none fits: the statements then stay in the open graph. Your decision stands; the aligner never overrides a person.",
+    alignmentValue: "a value",
+    alignmentNone: "none fits",
+    alignmentForward: "as written",
+    alignmentReverse: "reversed",
+    alignmentBind: "Bind",
+    alignmentLeaveOpen: "Leave open",
+    alignmentStatements: (n: number) => (n === 1 ? "1 statement" : `${n} statements`),
+    alignmentEntities: (n: number) => (n === 1 ? "1 thing" : `${n} things`),
+    alignmentVotes: (first: string, second: string) => `Votes: ${first} · ${second}`,
+    // 状态属性下，单个日期标的是什么（#966）
+    alignmentMarks: "A single date",
+    alignmentMarksStart: "starts it",
+    alignmentMarksEnd: "ends it",
+    alignmentMarksNone: "neither",
+    alignmentMarksStartHint: "joined, was appointed, took over: it holds from that date",
+    alignmentMarksEndHint: "left, resigned from, stepped down as: it ends on that date",
+    alignmentMarksNoneHint:
+      "only seen to hold then: statements with a single date stay in the open graph",
+    alignmentMarksRequired: "Say what a single date marks first.",
+    alignmentAwaitsMarks: (property: string) =>
+      `Bound to ${property}, but what a single date marks is not settled. Until you say, statements with a single date stay in the open graph.`,
+    alignmentRuleImplies: (property: string) => `also implies ${property}`,
+    alignmentRuleObjectIsStatement: "object: the statement's own object",
+    alignmentRuleReading: (reading: string) => `object: read from the words as ${reading.replace(/_/g, " ")}`,
+    alignmentRuleKindWord: (word: string) => `things called "${word}"`,
+    alignmentApprove: "Approve rule",
+    alignmentReject: "Reject",
+    alignmentRuleAccepted: "Saved. Implied facts are being computed in the background.",
+    // 勘误队列（0044 决定 7）
+    errata: "The errata agent held these for you",
+    errataHint:
+      "After extraction an agent rereads each document's typed facts, structural flags first, and retracts, revises or adds with the document's own words as evidence. An action that would reach outside the graph (a derived fact rests on it, someone asked about it, or it would give a one-value property two values) waits here for a person.",
+    errataRetract: "wants to retract",
+    errataRevise: "wants to revise to",
+    errataAdd: "wants to add",
+    errataFlag: (flag: string) =>
+      ({
+        domain: "flagged: subject outside the property's kinds",
+        range: "flagged: object outside the property's kinds",
+        name_absent: "flagged: a name not in the document",
+        no_date: "flagged: date property without a date",
+      })[flag] ?? flag,
+    errataHeld: (detail: string) => {
+      const [kind, ...rest] = detail.split(" ");
+      const value = rest.join(" ");
+      if (kind === "derived") return `Held: ${value} derived fact(s) rest on it`;
+      if (kind === "answered") return `Held: it was named in ${value} answer(s)`;
+      if (kind === "contradiction") return `Held: "${value}" allows one value and would get two`;
+      if (kind === "unflagged") return "Held: the structure did not doubt this fact; a person confirms the change";
+      return `Held: ${detail}`;
+    },
+    errataQuote: "Document says:",
+    errataApprove: "Apply",
+    errataReject: "Reject",
+    errataDecided: "Saved.",
+    alignmentTooMany: (n: number) => `${n} properties could apply; too many to ask the model. Pick one or leave it open.`,
+    alignmentConflict: "This decision conflicts with the current state. Refresh and review it before trying again.",
+    alignmentKindWordBusy: "This kind word is being updated by another operation. Please try again shortly.",
+    alignmentAccepted: "Decision saved. The typed graph is being recomputed and will refresh here when it is done.",
+    defects: "Ontology contradicts itself",
+    defectsHint:
+      "Problems in the definitions themselves — no facts involved. These come first: while a definition contradicts itself, every fact-level finding that rests on it is suspect.",
+    defectSymAsym: "Declared both symmetric and asymmetric",
+    defectTransFunc: "Transitive and functional at once",
+    defectCycle: "subClassOf runs in a circle",
+    defectDisjointAncestor: "Disjoint with its own ancestor",
+    defectInheritsDisjoint: "Inherits from two disjoint classes",
+    defectInverseSelf: "Its own inverse — say symmetric instead",
+    defectInverseNotMutual: "The inverse does not point back",
+    defectSubPropertyCycle: "subPropertyOf runs in a circle",
+    defectRulesDisagree: "Two rules produce contradicting derivations",
+    rulesDisagreeCount: (n: number) =>
+      `${n} pair(s) of derivations held back until this is settled`,
+    rulesDisagreeRule: (
+      a: string,
+      va: string,
+      b: string,
+      vb: string,
+      axiom: string,
+    ) => `${a} on ${va} with ${b} on ${vb}, against ${axiom}`,
+    defectNeverInstantiable: "no instance can ever satisfy it",
+    defectFixed: "I fixed the ontology",
+    defectAccepted: "Leave it",
+    runInference: "Run inference",
+    inferring: "Inferring…",
+    inferenceNoRules:
+      "No transitive or symmetric property is declared, so there is no rule to run.",
+    inferenceAdded: (n: number) => `${n} facts derived`,
+    inferenceRetracted: (n: number) => `${n} retracted`,
+    inferenceNothing: "Nothing new to derive",
+    inferenceCapped: (n: number) =>
+      `${n} predicate(s) hit the per-predicate limit and were not closed fully`,
+    violations: "Axiom violations",
+    violationsHint:
+      "Facts that contradict axioms your ontology declares. Nothing here is a guess — a predicate that declares no axioms is never checked.",
+    violationSelfLoop: "Points at itself",
+    violationAsymmetry: "Both directions hold at once",
+    violationCycle: "Cycle through the transitive chain",
+    /** 互斥的三类只在同时成立时才报（#634），所以文案说「同一时间」 */
+    violationFunctional: "More than one value at once",
+    /** 宾语侧（#634）：同一个对象同一时间被不止一个主语指着 */
+    violationInverseFunctional: "More than one holder at once",
+    /** 签名违规（#190 / #196）：一条事实的主语或宾语落在谓词声明的类型之外——
+     *  抽取时会掰正，采纳与合并这两条路从前绕过了检查 */
+    violationSignature: "Subject or object outside the declared types",
+    /** 0017：派生撞上断言。卡片是一次审核，线索指向上游的错 */
+    violationDerived: "A derivation contradicts an assertion",
+    derivedLine: (s: string, p: string, o: string) =>
+      `Derived: ${s} · ${p} · ${o}`,
+    derivedBy: (rule: string, via: string) => `by ${rule} on ${via}`,
+    assertedLine: (t: string) => `Asserted: ${t}`,
+    hintStale:
+      "The assertion has no end date and the derivation starts later. It may simply have ended.",
+    hintDuplicate:
+      "Two entities share this name. They may be the same one.",
+    hintUnsure:
+      "The assertion was extracted with low confidence. Read its sentence.",
+    hintReadBoth: "Read both sentences and decide which one is wrong.",
+    closeAssertion: "Give the assertion an end date",
+    retractAssertion: "Retract the assertion",
+    seeDuplicates: "See duplicates",
+    openOntology: "Open the ontology",
+    letBothStand: "Let both stand",
+    violationVia: (p: string) => `via ${p}`,
+    violationPath: (n: number) => `${n} facts in the cycle`,
+    retractFact: "Data is wrong",
+    /** 双事实与环上的违规：撤具体哪一条（#202） */
+    retractThis: "Retract",
+    retractThisHint: "Withdraw this fact from the graph; the rest stay.",
+    relaxAxiom: "Axiom is wrong",
+    /** 互斥组可以不止两条 */
+    acceptBoth: (n: number): string => (n > 2 ? "All are right" : "Both are right"),
+    runCheck: "Run check",
+    checkNeverRun:
+      "Not checked yet. Contradictions are found by asking your ontology, so a run here only reports what its axioms actually say.",
+    checking: "Checking…",
+    checkNoAxioms:
+      "No axioms declared, so nothing could be checked. Import an ontology that declares them.",
+    checkFound: (n: number) => `${n} new`,
+    /** 算出来了，但都是已经在队列里或已被裁决过的——说「3 处矛盾」而列表只有
+     *  一条会让人以为界面漏了东西 */
+    checkNothingNew: "Nothing new",
+    checkClean: (n: number) => `${n} facts checked, no contradictions`,
+    mappings: "Data mapping",
+    mappingsHint:
+      "Proposed mappings from a business concept to how it is computed. Confirm one and Ask uses it instead of guessing from the schema.",
+    mappingDerived: "derived",
+    // 记忆抽出、等人点头的事实（0015）
+    pending: "Awaiting your confirmation",
+    pendingHint:
+      "Facts extracted from what you asked the assistant to remember. Nothing here is in the graph yet: " +
+      "the sentence is kept, the facts wait for your nod. Confirm to add with the sentence as evidence; " +
+      "reject and it will not be proposed again.",
+    pendingNoPredicate: "The ontology has no relation for this; the word is the model's own.",
+    pendingOwnWords: "In the document's own words; binding to the ontology comes with alignment.",
+    pendingNoPredicateChip: "no relation in ontology",
+    pendingSaidBy: (name: string) => `said by ${name}`,
+    /* 同一个人可以挂着好几个 agent，只写人名分不出是哪一个记的 */
+    pendingSaidVia: (name: string, agent: string) => `said by ${name} · via ${agent}`,
+    nodCardTitle: (n: number) =>
+      n === 1
+        ? "One fact extracted from this. Confirm to add it to the graph, or reject."
+        : `${n} facts extracted from this. Confirm to add them to the graph, or reject.`,
+    lowConfidenceHint:
+      "Extracted with confidence below 75%. Confirm to trust, reject to remove from the graph (the ledger keeps the record).",
+    confirm: "Confirm",
+    reject: "Reject",
+    confidence: (pct: number) => `${pct}%`,
+    mergeHistory: "Merge history",
+    mergedBy: (name: string) => `by ${name}`,
+    mergedByAi: "by AI adjudicator",
+    revert: "Revert",
+    reverted: "Reverted",
+    ongoing: "now",
+    conflicts: "Temporal conflicts",
+    conflictsHint:
+      "Two facts claim the same single-valued relation. Clear successions close automatically; " +
+      "these need a human call. Closing is reversible through the ledger.",
+    conflictReason: {
+      no_time: "new fact has no date",
+      simultaneous: "same start date",
+      described_evidence: "the newer fact was read off a picture",
+      low_confidence: "the newer fact was not sure enough",
+    } as Record<string, string>,
+    conflictVs: "vs",
+    conflictSince: (d: string) => `since ${d}`,
+    closeOld: "Close old",
+    closeOldAt: (d: string) => `Close old at ${d}`,
+    keepBoth: "Keep both",
+    rejectNew: "Reject new",
+    closeAtPlaceholder: "2024-06-15 · 2024-06 · 2024 · 2024-06-15T14:32Z",
+    unconfirmed: "No longer stated",
+    unconfirmedHint:
+      "Every source that stated these facts has since been updated without them. " +
+      "Nothing is deleted automatically — absence isn't negation. Reject extraction " +
+      "errors, or close a fact that genuinely ended (pick the date it ended).",
+    closeFact: "Close",
+    closeFactAt: (d: string) => `Close at ${d}`,
+  },
+  /** 通用组件文案（SearchSelect 等） */
+  ui: {
+    close: "Close",
+    noMatches: "No matches",
+    keepTyping: (n: number) => `${n} more — keep typing to narrow down`,
+  },
+  kbset: {
+    title: "Knowledge base settings",
+    general: "General",
+    members: "Members",
+    /* 自动扩本体开关。说明必须讲清关掉之后失去的**只是**代劳，不是留意——
+       否则用户会以为关掉它就看不到未匹配的信号了 */
+    autoExtend: "Extend the ontology automatically",
+    autoExtendNote:
+      "When extraction meets a relation this ontology does not have, add it and reclassify the " +
+      "facts that were waiting for it. Every change is listed and can be undone. Turning this " +
+      "off does not stop Utopia from noticing — the phrases still collect under Unmatched, they " +
+      "just wait for you to approve them.",
+    materialize: "Materialize inferences",
+    materializeNote:
+      "Write facts the ontology entails into the ledger — transitive chains and symmetric pairs. " +
+      "They are marked as derived and kept in their own section, so if the declaration behind " +
+      "them turns out to be wrong, taking them back takes one click.",
+    autoResolveTypes: "Resolve entity types after extraction",
+    autoResolveTypesNote:
+      "After each document is extracted, run a round of type resolution on entities the engine has not looked at yet. Only refinements within the current class are applied on their own — a re-classification across the tree still waits for you on the Ontology page. Every batch is listed there and can be undone.",
+    governance: "Let the agent work the duplicates queue",
+    governanceNote:
+      "First in, first out. Before deciding a pair the agent reads what people in this base decided on the same names and the same kinds of pairs. It merges only where that history supports it, keeps apart on confidence, and leaves a proposal for everything else. Every decision is listed under Agent on the Review page and can be reverted. Turning this off stops the queue.",
+    inferEvery: "Re-derive every",
+    minutes: "minutes",
+    lastInference: (when: string) => `last run ${when}`,
+    failedJobs: (n: number) => (n === 1 ? "1 failed job" : `${n} failed jobs`),
+    requeue: "Run again",
+    requeued: (n: number) =>
+      n === 1 ? "1 job back in the queue" : `${n} jobs back in the queue`,
+    /* 语料语言。措辞要把"这不是界面语言"讲清楚，否则一定有人当成界面开关 */
+    cardIdentity: "Name and description",
+    cardIdentityNote:
+      "Up to 64 characters. This is the name in the switcher and at the top of every page of this base.",
+    cardVisibilityNote:
+      "Open means everyone in the deployment can read this base. Restricted means only the people listed under Members.",
+    cardVisibilityFoot: "Takes effect immediately. Roles granted under Members are kept either way.",
+    cardAutomation: "What runs on its own",
+    cardAutomationNote:
+      "Applies from the next extraction on. Everything these do is listed and can be undone.",
+    cardJobs: "Background jobs",
+    ontologyLang: "Language of this ontology",
+    ontologyLangNote:
+      "Which language class and relation descriptions are written in. Those go straight " +
+      "into the extraction prompt, so the reader is the model while it reads your documents — " +
+      "match your documents, not your interface. Changing this does not rewrite what is " +
+      "already here; it decides the language of descriptions written from now on.",
+    defaultOpenLabel: "Open to everyone",
+    defaultOpenNote:
+      "This is the deployment's default knowledge base, so visibility is locked: every member " +
+      "gets at least viewer access here, which guarantees nobody signs in to an empty screen. " +
+      "It can't be deleted for the same reason. To give someone more than viewing, grant a " +
+      "role under Members; for a private space, create a separate knowledge base and set it " +
+      "to Restricted.",
+    data: "Data",
+    dataHint:
+      "Mounted read-only databases this knowledge base may query from Chat. " +
+      "Mounting ingests the database schema so the assistant knows the tables.",
+    dataMount: "Mount",
+    dataUnmount: "Unmount",
+    dataSyncSchema: "Refresh schema",
+    dataSchemaSynced: (n: number) => `Schema ingested (${n} tables)`,
+    dataExplore: "Explore mappings",
+    dataExploreHint:
+      "An agent reads the schemas and proposes metric/dimension definitions — review them in Review before Chat uses them.",
+    dataExploreQueued:
+      "Exploration queued — proposals will appear in Review shortly.",
+    dataNone: "No data sources mounted.",
+    dataNoneAvailable:
+      "No data sources registered yet — ask a deployment admin to register one.",
+    dataNewConn: "Register a new connection",
+    activity: "Activity",
+    activityHint:
+      "Who changed what in this knowledge base. Pure audit — records are append-only.",
+    auditAllActions: "All actions",
+    auditSince: "From this date",
+    auditUntil: "Up to this date",
+    auditClear: "Clear filters",
+    auditTotal: (n: number) => `${n} events`,
+    activityEmpty: "Nothing recorded yet.",
+    deletedUser: "a removed user",
+    // actor_id 为空的两种引擎动作：审阅队列里的自动裁决，和其余后台工作
+    adjudicator: "AI adjudicator",
+    engine: "the engine",
+    auditActions: {
+      "entity_type.created": "created entity type",
+      "entity_type.updated": "updated entity type",
+      "entity_type.deleted": "deleted an entity type",
+      "relation_type.created": "created relation type",
+      "relation_type.updated": "updated relation type",
+      "relation_type.deleted": "deleted a relation type",
+      "kb.updated": "updated knowledge base settings",
+      "kb.member_set": "set a member role",
+      "kb.member_removed": "removed a member",
+      "source.created": "created source",
+      "source.updated": "updated source",
+      "source.deleted": "deleted a source",
+      "document.deleted": "deleted document",
+      "ontology.imported": "imported an ontology",
+    } as Record<string, string>,
+    membersHintOpen:
+      "Everyone in this deployment can already read this knowledge base, so there is no " +
+      "viewer role to grant — list someone here only to give them write access. " +
+      "Deployment admins always have it.",
+    membersHintRestricted:
+      "Only the people listed here can see this knowledge base, and their role decides " +
+      "what they can change. Deployment admins always have access.",
+    addMember: "Add…",
+    addMemberTitle: "Add member",
+    roles: { viewer: "Viewer", editor: "Editor", admin: "Admin" },
+    remove: "Remove",
+    noMembers: "No per-KB roles set.",
+    noWriters: "Nobody has been given write access yet.",
+    save: "Save",
+    saved: "Saved",
+    danger: "Danger zone",
+    deleteKb: "Delete this knowledge base",
+    deleteHint: (name: string) =>
+      `Type “${name}” to confirm. Documents, graph and sources are permanently removed.`,
+    deleteBtn: "Delete permanently",
+    deleteRowTitle: "Delete this knowledge base",
+    deleteRowHint: "Documents, graph and sources are removed permanently.",
+    deleteRowBtn: "Delete",
+  },
+  members: {
+    title: "Deployment users",
+    systemAdmin: "System admin",
+    remove: "Remove",
+    deactivate: "Deactivate",
+    cancel: "Cancel",
+    deactivateHint:
+      "Cuts off access everywhere — sign-in and any token already issued. What they did stays attributed to them.",
+    deactivatedTitle: "Deactivated accounts",
+    deactivatedHint:
+      "They cannot sign in and do not appear in any member list. What they did is still attributed to them — that is why the account is kept rather than deleted.",
+    editMember: "Edit member",
+    close: "Close",
+    save: "Save",
+    reactivate: "Restore",
+    roleLabel: "Role",
+    filterAll: "All users",
+    filterAllRoles: "All roles",
+    statusLabel: "Status",
+    filterActive: "Active",
+    filterDeactivated: "Deactivated",
+    deactivateConfirm: (name: string) =>
+      `Deactivate ${name}? They lose access everywhere. Their past decisions stay on record.`,
+    addExisting: "Add existing user",
+    userLabel: "User",
+    pickUser: "Select a user to add…",
+    add: "Add",
+    roles: {
+      owner: "Owner",
+      admin: "Admin",
+      editor: "Editor",
+      viewer: "Viewer",
+    },
+  },
+};
+
+/** 语言包的结构契约。其余语言包写成 `const zh: Strings = {…}`，漏一条即编译失败 */
+export type Strings = typeof en;

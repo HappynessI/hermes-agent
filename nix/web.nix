@@ -1,26 +1,33 @@
-# Dashboard compilation consumes prepared icons; no npm lifecycle preparation.
-{ hermesNpmLib, generatedIcons, ... }:
+# nix/web.nix — Hermes Web Dashboard (Vite/React) frontend build
+{ hermesNpmLib, ... }:
 hermesNpmLib.buildNpmPackage {
   dirs = [
     "web"
+
+    # @hermes/shared ships as a file: workspace dep of web, so its source
+    # must be in the filtered src tree too.
     "apps/shared"
-    "scripts/build/web.mjs"
-    "scripts/build/freshness.mjs"
-    "scripts/build/frontend-common.mjs"
   ];
 
   doCheck = false;
 
   buildPhase = ''
-    runHook preBuild
-    node scripts/build/web.mjs --source "$PWD" --icons ${generatedIcons} --out "$TMPDIR/web-product"
-    runHook postBuild
+    # Build from web/ so vite.config.ts and tsconfig resolve correctly.
+    # The workspace root's node_modules/ is at ../node_modules/.
+    cd web
+    node ../node_modules/typescript/bin/tsc -b
+    # outDir in vite.config.ts points to ../hermes_cli/web_dist for the
+    # monorepo layout.  Override with --outDir dist for the nix build.
+    node ../node_modules/vite/bin/vite.js build --outDir dist
+
+    # Return to source root so installPhase paths are correct.
+    cd ..
   '';
 
   installPhase = ''
     runHook preInstall
-    mkdir -p $out
-    cp -r "$TMPDIR/web-product/." $out/
+    # vite writes to web/dist/ (we cd'd there, overrode outDir, then cd'd back).
+    cp -r web/dist $out
     runHook postInstall
   '';
 }

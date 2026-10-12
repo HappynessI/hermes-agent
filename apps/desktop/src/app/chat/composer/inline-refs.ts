@@ -38,15 +38,11 @@ export function dragHasAttachments(transfer: DataTransfer | null, pathsMime: str
     return false
   }
 
-  const types = Array.from(transfer.types || [])
-
-  // A browser link drag carries `text/uri-list` (on Windows also a virtual
-  // shortcut File); accept it so the link lands as an `@url:` chip.
-  if (types.includes(pathsMime) || types.includes('text/uri-list')) {
+  if (Array.from(transfer.types || []).includes(pathsMime)) {
     return true
   }
 
-  if (types.includes('Files')) {
+  if (Array.from(transfer.types || []).includes('Files')) {
     return true
   }
 
@@ -54,10 +50,6 @@ export function dragHasAttachments(transfer: DataTransfer | null, pathsMime: str
 }
 
 export function droppedFileInlineRef(candidate: DroppedFile, cwd: string | null | undefined) {
-  if (candidate.url) {
-    return `@url:${formatRefValue(candidate.url)}`
-  }
-
   if (!candidate.path) {
     return null
   }
@@ -142,30 +134,19 @@ function buildRefFragment(
   return fragment
 }
 
-export function insertInlineRefsIntoEditor(
-  editor: HTMLDivElement,
-  refs: readonly InlineRefInput[],
-  { interactive = true }: { interactive?: boolean } = {}
-) {
+export function insertInlineRefsIntoEditor(editor: HTMLDivElement, refs: readonly InlineRefInput[]) {
   const parsed = refs.map(parseInlineRef).filter((ref): ref is NonNullable<typeof ref> => ref !== null)
-  const hasEmptySentinel = editor.childNodes.length === 1 && editor.firstChild?.nodeName === 'BR'
 
   if (!parsed.length) {
     return null
   }
 
-  if (hasEmptySentinel) {
-    editor.replaceChildren()
-  }
+  editor.focus({ preventScroll: true })
 
-  if (interactive) {
-    editor.focus({ preventScroll: true })
-  }
-
-  const selection = interactive ? window.getSelection() : null
+  const selection = window.getSelection()
 
   const range =
-    !hasEmptySentinel && selection?.rangeCount && editor.contains(selection.getRangeAt(0).commonAncestorContainer)
+    selection?.rangeCount && editor.contains(selection.getRangeAt(0).commonAncestorContainer)
       ? selection.getRangeAt(0)
       : null
 
@@ -191,10 +172,7 @@ export function insertInlineRefsIntoEditor(
         needsBeforeSpace: current.length > 0 && !/\s$/.test(current)
       })
     )
-
-    if (interactive) {
-      placeCaretEnd(editor)
-    }
+    placeCaretEnd(editor)
   }
 
   normalizeComposerEditorDom(editor)

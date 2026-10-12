@@ -1,5 +1,3 @@
-import type { MessageCompletePayload, SubagentEventPayload, ToolLabel } from '@hermes/shared/gateway-events'
-
 import {
   REASONING_PULSE_MS,
   STREAM_BATCH_MS,
@@ -7,20 +5,17 @@ import {
   STREAM_SCROLL_BATCH_MS,
   STREAM_TYPING_BATCH_MS
 } from '../config/timing.js'
-import type { SessionInterruptResponse } from '../gatewayTypes.js'
-import { t } from '../i18n/runtime.js'
+import type { SessionInterruptResponse, SubagentEventPayload } from '../gatewayTypes.js'
 import { appendToolShelfMessage, isToolShelfMessage } from '../lib/liveProgress.js'
 import { hasReasoningTag, splitReasoning } from '../lib/reasoning.js'
 import {
   boundedLiveRenderText,
+  buildToolTrailLine,
+  buildVerboseToolTrailLine,
   estimateTokensRough,
-  formatToolCall,
-  formatToolLabel,
   isTransientTrailLine,
   sameToolTrailGroup,
-  toolTrailLabel,
-  toolTrailLine,
-  verboseToolTrailLine
+  toolTrailLabel
 } from '../lib/text.js'
 import type { ActiveTool, ActivityItem, Msg, SubagentProgress, TodoItem } from '../types.js'
 
@@ -29,28 +24,6 @@ import { resetFlowOverlays } from './overlayStore.js'
 import { pushSnapshot } from './spawnHistoryStore.js'
 import { archiveDoneTodos, getTurnState, patchTurnState, resetTurnState } from './turnStore.js'
 import { getUiState, patchUiState } from './uiStore.js'
-
-function toolTrailLines(
-  done: ActiveTool | undefined,
-  name: string,
-  labels: readonly ToolLabel[],
-  summary: string,
-  resultText: string,
-  took?: number
-): string[] {
-  const heads = labels.length ? labels.map(formatToolLabel) : [formatToolCall(name, done?.context || '')]
-  const verbose = Boolean(done?.verboseArgs || resultText)
-
-  return heads.map((head, index) => {
-    if (index < heads.length - 1) {
-      return toolTrailLine(head)
-    }
-
-    return verbose
-      ? verboseToolTrailLine(head, false, took, done?.verboseArgs, resultText || summary)
-      : toolTrailLine(head, false, summary, took)
-  })
-}
 
 const INTERRUPT_COOLDOWN_MS = 1500
 const ACTIVITY_LIMIT = 8
@@ -93,14 +66,10 @@ const parseTodos = (value: unknown): null | TodoItem[] => {
         return null
       }
 
-      const id = String(row.id ?? '').trim()
-      const parent = String(row.parent ?? '').trim()
-
       return {
         content: String(row.content ?? '').trim(),
-        id,
-        status,
-        ...(parent && parent !== id ? { parent } : {})
+        id: String(row.id ?? '').trim(),
+        status
       }
     })
     .filter((item): item is TodoItem => Boolean(item?.id && item.content))
@@ -123,34 +92,6 @@ const finalTail = (finalText: string, segments: Msg[]) => {
   return tail
 }
 
-const interruptedText = (partial: string) => (partial ? `${partial}\n\n*[interrupted]*` : '*[interrupted]*')
-
-// What interruptTurn sealed into the transcript: `text` is the bubble it
-// appended (null when it only wrote a sys note), `partial` the reply text in it.
-export interface SealedInterrupt {
-  partial: string
-  text: null | string
-}
-
-// The bubble fix for an honoured interrupt: Ctrl+C seals the reply the moment
-// the key lands, but the agent keeps streaming until it notices the interrupt,
-// and it persists (and replays next turn) everything it streamed. The
-// interrupted message.complete carries that persisted partial; when it extends
-// what was sealed, the transcript takes it so the screen matches state.db.
-export const lateInterruptedReply = (
-  sealed: null | SealedInterrupt,
-  payload: MessageCompletePayload
-): null | { from: null | string; to: string } => {
-  const persisted = typeof payload.text === 'string' ? payload.text.trim() : ''
-  const shown = sealed?.partial.trimEnd() ?? ''
-
-  if (!sealed || payload.status !== 'interrupted' || persisted.length <= shown.length || !persisted.startsWith(shown)) {
-    return null
-  }
-
-  return { from: sealed.text, to: interruptedText(persisted) }
-}
-
 export interface InterruptDeps {
   appendMessage: (msg: Msg) => void
   gw: { request: <T = unknown>(method: string, params?: Record<string, unknown>) => Promise<T> }
@@ -171,7 +112,6 @@ const clear = (t: Timer): null => {
 class TurnController {
   bufRef = ''
   interrupted = false
-  sealedInterrupt: null | SealedInterrupt = null
   lastStatusNote = ''
   persistedToolLabels = new Set<string>()
   persistSpawnTree?: (subagents: SubagentProgress[], sessionId: null | string) => Promise<void>
@@ -192,6 +132,7 @@ class TurnController {
   private reasoningTimer: Timer = null
   private streamTimer: Timer = null
   private streamDelay = STREAM_IDLE_BATCH_MS
+  private toolProgressTimer: Timer = null
 
   // ── Credits notice machinery (Strategy B) ───────────────────────────
   //
@@ -325,14 +266,6 @@ class TurnController {
 
   endReasoningPhase() {
     this.reasoningStreamingTimer = clear(this.reasoningStreamingTimer)
-
-    // Seal any open reasoning segment so its isLiveReasoning flag drops the
-    // moment the reasoning phase ends — the panel must stop tracking the
-    // turn's global reasoningActive, not stay "live" for the rest of the turn.
-    if (this.reasoningSegmentIndex !== null) {
-      this.syncReasoningSegment(false)
-    }
-
     patchTurnState({ reasoningActive: false, reasoningStreaming: false })
   }
 
@@ -352,7 +285,7 @@ class TurnController {
       tools: [],
       turnTrail: []
     })
-    patchUiState({ busy: false, compacting: false })
+    patchUiState({ busy: false })
     resetFlowOverlays()
   }
 
@@ -388,20 +321,20 @@ class TurnController {
     // otherwise emit a sys note so the transcript always records that the
     // turn was cancelled, even when only prior `segments` were preserved.
     if (partial || tools.length) {
-      const text = interruptedText(partial)
-
-      appendMessage({ role: 'assistant', text, ...(tools.length && { tools }) })
-      this.sealedInterrupt = { partial, text }
+      appendMessage({
+        role: 'assistant',
+        text: partial ? `${partial}\n\n*[interrupted]*` : '*[interrupted]*',
+        ...(tools.length && { tools })
+      })
     } else {
-      sys(t('session.turn.interrupted'))
-      this.sealedInterrupt = { partial: '', text: null }
+      sys('interrupted')
     }
 
     this.clearStatusTimer()
 
     if (opts.keepBusy) {
       // `idle()` already cleared busy; re-assert it so the drain waits for settle.
-      patchUiState({ busy: true, status: t('session.status.interrupting') })
+      patchUiState({ busy: true, status: 'interrupting…' })
 
       return
     }
@@ -426,7 +359,7 @@ class TurnController {
     })
   }
 
-  private syncReasoningSegment(live = true) {
+  private syncReasoningSegment() {
     const thinking = this.activeReasoningText.trim()
 
     if (!thinking) {
@@ -439,8 +372,7 @@ class TurnController {
       text: '',
       thinking,
       thinkingTokens: estimateTokensRough(thinking),
-      toolTokens: this.toolTokenAcc || undefined,
-      ...(live ? { isLiveReasoning: true } : {})
+      toolTokens: this.toolTokenAcc || undefined
     }
 
     if (this.reasoningSegmentIndex === null) {
@@ -454,7 +386,7 @@ class TurnController {
   }
 
   private closeReasoningSegment() {
-    this.syncReasoningSegment(false)
+    this.syncReasoningSegment()
     this.activeReasoningText = ''
     this.reasoningSegmentIndex = null
   }
@@ -611,9 +543,6 @@ class TurnController {
   }
 
   recordError() {
-    // A failed turn discards the whole unsealed turn (flushed segments AND the
-    // streaming tail) — unlike recordMessageComplete, which must keep the tail
-    // (#61520), and interruptTurn, which preserves it as `partial`.
     this.idle()
     this.clearReasoning()
     this.clearStatusTimer()
@@ -626,7 +555,12 @@ class TurnController {
     this.flushPendingNotice()
   }
 
-  recordMessageComplete(payload: MessageCompletePayload) {
+  recordMessageComplete(payload: {
+    rendered?: string
+    reasoning?: string
+    response_previewed?: boolean
+    text?: string
+  }) {
     this.closeReasoningSegment()
 
     // Ink renders markdown via <Md>; the gateway's Rich-rendered ANSI
@@ -635,22 +569,7 @@ class TurnController {
     // `display.final_response_markdown: render` because raw ANSI escapes
     // pass through into the React tree.  Prefer raw text and fall back
     // only when the gateway elected not to send any (#16391).
-    // `text` is `str | JsonValue` on the wire (structured parts stay possible); only a string renders here.
-    const wireText = typeof payload.text === 'string' ? payload.text : undefined
-    const completionText = wireText ?? payload.rendered
-    const rawText = (completionText ?? this.bufRef).trimStart()
-
-    // Text still in `this.bufRef` streamed after the last segment flush; `idle()`
-    // below would wipe it (#61520). Flush it as a segment only when the
-    // gateway's final text does not already carry it — otherwise the tail IS
-    // the answer and flushing would move the tool shelf/trail under it. Skipped
-    // when `completionText` is absent: `rawText` is then the buffer (#16391).
-    const tail = this.bufRef.trim()
-
-    if (tail && completionText != null && !completionText.includes(tail)) {
-      this.flushStreamingSegment()
-    }
-
+    const rawText = (payload.text ?? payload.rendered ?? this.bufRef).trimStart()
     const split = splitReasoning(rawText)
     // Only dedupe segments AFTER the interim boundary — interim-sealed
     // segments are preserved even if the final text includes them.
@@ -717,7 +636,6 @@ class TurnController {
     }
 
     const wasInterrupted = this.interrupted
-    const interruptedReply = wasInterrupted ? lateInterruptedReply(this.sealedInterrupt, payload) : null
 
     // Archive the turn's spawn tree to history BEFORE idle() drops subagents
     // from turnState.  Lets /replay and the overlay's history nav pull up
@@ -739,17 +657,16 @@ class TurnController {
     this.persistedToolLabels.clear()
     this.bufRef = ''
     this.interrupted = false
-    this.sealedInterrupt = null
     patchTurnState({ activity: [], outcome: '' })
 
     // Real turn end: surface any notice held back while busy. Done after
     // idle() flips busy=false so applyNotice() reaches the visible slot.
     this.flushPendingNotice()
 
-    return { finalMessages, finalText, interruptedReply, wasInterrupted }
+    return { finalMessages, finalText, wasInterrupted }
   }
 
-  recordMessageDelta({ text }: { rendered?: string | null; text?: string }) {
+  recordMessageDelta({ text }: { rendered?: string; text?: string }) {
     if (this.interrupted || !text) {
       return
     }
@@ -870,20 +787,20 @@ class TurnController {
   recordToolComplete(
     toolId: string,
     fallbackName?: string,
+    error?: string,
     summary?: string,
     duration?: number,
     todos?: unknown,
-    resultText?: string,
-    labels?: ToolLabel[]
+    resultText?: string
   ) {
     if (this.interrupted) {
       return
     }
 
     this.recordTodos(todos)
-    const lines = this.completeTool(toolId, fallbackName, summary, duration, resultText, labels)
+    const line = this.completeTool(toolId, fallbackName, error, summary, duration, resultText)
 
-    this.pendingSegmentTools = [...this.pendingSegmentTools, ...lines]
+    this.pendingSegmentTools = [...this.pendingSegmentTools, line]
     this.flushPendingToolsIntoLastSegment()
     this.publishToolState()
   }
@@ -892,37 +809,49 @@ class TurnController {
     diffText: string,
     toolId: string,
     fallbackName?: string,
+    error?: string,
     duration?: number,
-    resultText?: string,
-    labels?: ToolLabel[]
+    resultText?: string
   ) {
     if (this.interrupted) {
       return
     }
 
     this.flushStreamingSegment()
-    this.pushInlineDiffSegment(diffText, this.completeTool(toolId, fallbackName, '', duration, resultText, labels))
+    this.pushInlineDiffSegment(diffText, [this.completeTool(toolId, fallbackName, error, '', duration, resultText)])
     this.publishToolState()
   }
 
-  // `tool.complete` carries no error flag on the wire (tui_gateway/tool_progress.py::_on_tool_complete);
-  // a failed tool surfaces through its result text, so every trail line renders as non-error.
   private completeTool(
     toolId: string,
     fallbackName?: string,
+    error?: string,
     summary?: string,
     duration?: number,
-    resultText?: string,
-    eventLabels?: ToolLabel[]
+    resultText?: string
   ) {
     const done = this.activeTools.find(tool => tool.id === toolId)
     const name = done?.name ?? fallbackName ?? 'tool'
     const label = toolTrailLabel(name)
-    const labels = eventLabels?.length ? eventLabels : (done?.labels ?? [])
     const fallbackDuration = done?.startedAt ? (Date.now() - done.startedAt) / 1000 : undefined
-    const took = duration ?? fallbackDuration
 
-    const lines = toolTrailLines(done, name, labels, summary || '', resultText || '', took)
+    const line =
+      done?.verboseArgs || resultText
+        ? buildVerboseToolTrailLine(
+            name,
+            done?.context || '',
+            Boolean(error),
+            duration ?? fallbackDuration,
+            done?.verboseArgs,
+            error || resultText || summary || ''
+          )
+        : buildToolTrailLine(
+            name,
+            done?.context || '',
+            Boolean(error),
+            error || summary || '',
+            duration ?? fallbackDuration
+          )
 
     this.activeTools = this.activeTools.filter(tool => tool.id !== toolId)
 
@@ -934,7 +863,7 @@ class TurnController {
 
     this.turnTools = next.slice(-TRAIL_LIMIT)
 
-    return lines
+    return line
   }
 
   private publishToolState() {
@@ -945,7 +874,30 @@ class TurnController {
     })
   }
 
-  recordToolStart(toolId: string, name: string, context: string, verboseArgs?: string, labels?: ToolLabel[]) {
+  recordToolProgress(toolName: string, preview: string) {
+    if (this.interrupted) {
+      return
+    }
+
+    const index = this.activeTools.findIndex(tool => tool.name === toolName)
+
+    if (index < 0) {
+      return
+    }
+
+    this.activeTools = this.activeTools.map((tool, i) => (i === index ? { ...tool, context: preview } : tool))
+
+    if (this.toolProgressTimer) {
+      return
+    }
+
+    this.toolProgressTimer = setTimeout(() => {
+      this.toolProgressTimer = null
+      patchTurnState({ tools: [...this.activeTools] })
+    }, STREAM_BATCH_MS)
+  }
+
+  recordToolStart(toolId: string, name: string, context: string, verboseArgs?: string) {
     if (this.interrupted) {
       return
     }
@@ -958,7 +910,7 @@ class TurnController {
     const sample = `${name} ${context}`.trim()
 
     this.toolTokenAcc += sample ? estimateTokensRough(sample) : 0
-    this.activeTools = [...this.activeTools, { context, id: toolId, labels, name, startedAt: Date.now(), verboseArgs }]
+    this.activeTools = [...this.activeTools, { context, id: toolId, name, startedAt: Date.now(), verboseArgs }]
 
     patchTurnState({ toolTokens: this.toolTokenAcc, tools: this.activeTools })
   }
@@ -969,7 +921,6 @@ class TurnController {
     this.idle()
     this.bufRef = ''
     this.interrupted = false
-    this.sealedInterrupt = null
     this.lastStatusNote = ''
     this.activeReasoningText = ''
     this.pendingSegmentTools = []
@@ -1036,7 +987,6 @@ class TurnController {
     this.turnTools = []
     this.toolTokenAcc = 0
     this.interrupted = false
-    this.sealedInterrupt = null
     this.persistedToolLabels.clear()
     // "Flash and yield" notices clear when a new turn starts: a usage-band heads-up
     // (credits.usage, 50/75/90%) and the one-time "grant spent" transition
@@ -1077,12 +1027,11 @@ class TurnController {
       }
 
       const base: SubagentProgress = existing ?? {
-        delegationId: p.delegation_id ?? undefined,
         depth: p.depth ?? 0,
         goal: p.goal,
         id,
         index: p.task_index,
-        model: p.model ?? undefined,
+        model: p.model,
         notes: [],
         parentId: p.parent_id ?? null,
         startedAt: Date.now(),
@@ -1091,7 +1040,7 @@ class TurnController {
         thinking: [],
         toolCount: p.tool_count ?? 0,
         tools: [],
-        toolsets: p.toolsets ?? undefined
+        toolsets: p.toolsets
       }
 
       // Map snake_case payload keys onto camelCase state.  Only overwrite
@@ -1108,12 +1057,13 @@ class TurnController {
       const next: SubagentProgress = {
         ...base,
         apiCalls: p.api_calls ?? base.apiCalls,
-        delegationId: p.delegation_id ?? base.delegationId,
+        costUsd: p.cost_usd ?? base.costUsd,
         depth: p.depth ?? base.depth,
         filesRead: p.files_read ?? base.filesRead,
         filesWritten: p.files_written ?? base.filesWritten,
         goal: p.goal || base.goal,
         inputTokens: p.input_tokens ?? base.inputTokens,
+        iteration: p.iteration ?? base.iteration,
         model: p.model ?? base.model,
         outputTail,
         outputTokens: p.output_tokens ?? base.outputTokens,

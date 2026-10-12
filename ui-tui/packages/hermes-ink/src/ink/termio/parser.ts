@@ -52,15 +52,18 @@ function isEastAsianWide(codePoint: number): boolean {
   )
 }
 
-/** Whether a string holds more than one Unicode code point (surrogate-aware, O(1)). */
-export function hasMultipleCodepoints(str: string): boolean {
-  const first = str.codePointAt(0)
+function hasMultipleCodepoints(str: string): boolean {
+  let count = 0
 
-  if (first === undefined) {
-    return false
+  for (const _ of str) {
+    count++
+
+    if (count > 1) {
+      return true
+    }
   }
 
-  return str.length > (first > 0xffff ? 2 : 1)
+  return false
 }
 
 function graphemeWidth(grapheme: string): 1 | 2 {

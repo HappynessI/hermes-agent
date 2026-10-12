@@ -12,18 +12,15 @@ Hermes isn't just a CLI tool. You can import `AIAgent` directly and use it progr
 
 ## Installation
 
-Clone Hermes and prepare its source environment through PM. The Bash recipe is:
+Clone Hermes and create its supported editable development environment:
 
 ```bash
 git clone https://github.com/NousResearch/hermes-agent.git
 cd hermes-agent
-source ./activate
+uv sync
 ```
 
-Run your application with `python your_app.py` from that activated checkout.
-For PowerShell preparation or an independent interpreter, see the
-[PM developer workflow](../reference/package-management.md#developer-workflow).
-Hermes does not publish a supported wheel or source distribution for `requirements.txt` installs.
+Run your application with `uv run python your_app.py` from that checkout. Hermes does not publish a supported wheel or source distribution for `requirements.txt` installs.
 
 :::tip
 The same environment variables used by the CLI are required when using Hermes as a library. At minimum, set `OPENROUTER_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` if using direct provider access).
