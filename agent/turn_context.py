@@ -1176,7 +1176,7 @@ def build_turn_context(
 
     knowledge_context: KnowledgeSearchResult | str = ""
     _knowledge_manager = getattr(agent, "_knowledge_base_manager", None)
-    if _knowledge_manager:
+    if _knowledge_manager and _knowledge_manager.prefetch:
         try:
             _query = original_user_message if isinstance(original_user_message, str) else ""
             knowledge_context = _knowledge_manager.search(

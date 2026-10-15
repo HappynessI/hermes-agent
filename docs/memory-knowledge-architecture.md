@@ -136,6 +136,7 @@ memory:
 
 knowledge:
   enabled: true
+  prefetch: true
   max_context_chars: 12000
 ```
 
@@ -143,6 +144,13 @@ knowledge:
 With no knowledge-capable provider the section is a no-op. Disabling memory
 files does not disable a configured external provider; toolset visibility keeps
 the existing `memory` toolset compatibility rule.
+
+Set `knowledge.prefetch: false` for model-directed retrieval. Hermes then
+starts each turn without an automatic knowledge search. Enable the `knowledge`
+toolset so the model can choose when to search and what query to send, and can
+read documents through the selected provider. The default `true` retains the
+per-turn search using the current user message. This setting does not change
+explicit tool calls or direct `KnowledgeBaseManager.search()` calls.
 
 ## Adding a Memory Provider
 

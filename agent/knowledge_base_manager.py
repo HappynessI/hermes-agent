@@ -93,8 +93,12 @@ class KnowledgeBaseManager:
         default_backend: str = "",
         session_backend: str = "",
         default_top_k: int = 5,
+        prefetch: bool = True,
     ) -> None:
         self.enabled = bool(enabled)
+        if not isinstance(prefetch, bool):
+            raise ValueError("knowledge.prefetch must be a boolean")
+        self.prefetch = prefetch
         self.scope = scope or ProviderScope()
         self.max_context_chars = 12000
         self._registrations: Dict[str, _ProviderRegistration] = {}
@@ -565,6 +569,7 @@ def create_configured_knowledge_manager(
         scope=scope,
         default_backend=configured_backend,
         default_top_k=int(knowledge_config.get("top_k", 5)),
+        prefetch=knowledge_config.get("prefetch", True),
     )
     manager.max_context_chars = max(
         1,

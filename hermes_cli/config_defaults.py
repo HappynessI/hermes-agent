@@ -1696,6 +1696,8 @@ DEFAULT_CONFIG = {
     # for backward compatibility without changing the active memory provider.
     "knowledge": {
         "enabled": True,
+        # 关闭每轮自动预检索后，模型仍可按需调用已启用的知识工具。
+        "prefetch": True,
         # "openviking" or another registered knowledge provider. Empty keeps
         # the legacy dual-capability memory adapter only.
         "provider": "",
